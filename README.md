@@ -1,3 +1,10 @@
+## To-do's
+1. Add help center to as feature of how-to guides
+2. allow users to specificy which days they would like to trade and if they are accepting trades. - system falls back to allow requesting users to send request to people who have desired dates although they are not willing to trade as indicated
+3. system to update all affected calenders
+4. 
+
+   
 # Excel Shift Sync
 
 A secure, GDPR-compliant web application for syncing Excel shift schedules to Google Calendar.
@@ -77,3 +84,5 @@ export default {
 - Replace `plugin:@typescript-eslint/recommended` to `plugin:@typescript-eslint/recommended-type-checked` or `plugin:@typescript-eslint/strict-type-checked`
 - Optionally add `plugin:@typescript-eslint/stylistic-type-checked`
 - Install [eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react) and add `plugin:react/recommended` & `plugin:react/jsx-runtime` to the `extends` list
+
+
