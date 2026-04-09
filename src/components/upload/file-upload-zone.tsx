@@ -19,6 +19,8 @@ import { Progress } from "@/components/ui/progress";
 import { parseExcelFile, validateExcelFile } from "@/lib/excel-parser";
 import { ShiftData, ParsedScheduleResult } from "@/types/shift";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -29,7 +31,15 @@ import {
 import { getErrorMessage } from "@/lib/getErrorMessage";
 
 interface FileUploadZoneProps {
-  onFileProcessed: (shifts: ShiftData[], employeeName?: string) => void;
+  onFileProcessed: (
+    shifts: ShiftData[],
+    employeeName?: string,
+    context?: {
+      sourceFile: File;
+      parsedResult: ParsedScheduleResult;
+      consentToShare: boolean;
+    },
+  ) => void;
   disabled?: boolean;
 }
 
@@ -51,6 +61,7 @@ export function FileUploadZone({
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(
     null,
   );
+  const [consentToShare, setConsentToShare] = useState(false);
 
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
@@ -131,7 +142,11 @@ export function FileUploadZone({
         const employee = result.employees[0];
         setSelectedEmployeeId(employee.employeeId);
         setTimeout(() => {
-          onFileProcessed(employee.shifts, employee.employeeName);
+          onFileProcessed(employee.shifts, employee.employeeName, {
+            sourceFile: selectedFile,
+            parsedResult: result,
+            consentToShare,
+          });
         }, 500);
       }
       // Otherwise, wait for employee selection
@@ -151,7 +166,14 @@ export function FileUploadZone({
         (e) => e.employeeId === employeeId,
       );
       if (employee) {
-        onFileProcessed(employee.shifts, employee.employeeName);
+        if (!file) {
+          return;
+        }
+        onFileProcessed(employee.shifts, employee.employeeName, {
+          sourceFile: file,
+          parsedResult,
+          consentToShare,
+        });
       }
     }
   };
@@ -163,6 +185,7 @@ export function FileUploadZone({
     setProgress(0);
     setParsedResult(null);
     setSelectedEmployeeId(null);
+    setConsentToShare(false);
   };
 
   // Show employee selector if multiple employees found
@@ -201,6 +224,22 @@ export function FileUploadZone({
           </Alert>
         )}
 
+        <div className="flex items-start gap-2 rounded-md border p-3 bg-slate-50">
+          <Checkbox
+            id="uploader-consent"
+            checked={consentToShare}
+            onCheckedChange={(checked) => setConsentToShare(Boolean(checked))}
+            disabled={disabled || uploading}
+          />
+          <Label
+            htmlFor="uploader-consent"
+            className="text-xs sm:text-sm leading-relaxed"
+          >
+            Autorizo a partilha segura deste upload para recuperação de horário,
+            sujeita a consentimento explícito do destinatário.
+          </Label>
+        </div>
+
         {!file ? (
           <div
             onDragOver={handleDragOver}
@@ -221,6 +260,7 @@ export function FileUploadZone({
               accept=".xlsx,.xls"
               onChange={handleFileSelect}
               disabled={disabled}
+              aria-label="Selecionar ficheiro Excel de horários"
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
               id="file-upload"
             />

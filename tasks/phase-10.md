@@ -1,41 +1,47 @@
 # PHASE 10 - REALTIME + NOTIFICATIONS
 
-## Events
+## Objective
 
-- swap requests
-- approvals/rejections
-- validation alerts
-- shared schedule availability
+Add practical realtime updates and notification center scaffolding with deduped client behavior.
+
+## Scope
+
+### Realtime
+
+Use Supabase realtime where practical for:
+
+- swap request updates
+- leave request updates
+- schedule recovery availability
+
+### Notifications
+
+- Add notification center scaffold in UI
+- Deduplicate notifications client-side
+- Respect feature flags and environment mode
+
+### Feature Safety
+
+- Gate realtime with VITE_ENABLE_REALTIME
 
 ## Analyzer - Phase 10
 
 Validate:
 
-- UI updates without refresh
-- No duplicate notifications
-- Correct targeting
+- Targeted realtime updates render without refresh
+- Duplicate notifications are suppressed
+- Notifications are scoped to correct user context
+- Production-safe defaults are preserved
 
 If any condition fails:
 -> Fix before completion
 
-## Non-Functional Requirements
-
-- Idempotent operations
-- Secure RLS
-- Scalable queries
-- Modular architecture
-- Strong typing
-
 ## Final Objective
 
-Deliver a system that behaves like:
+Deliver an incremental, production-minded SaaS architecture where:
 
-A production-grade workforce scheduling platform with:
-
-- intelligent swap automation
-- enforced labor constraints
-- HR workflow integration
-- seamless calendar sync
-- frictionless onboarding via shared schedules
-
-This must feel like a real SaaS product, not a script.
+- Supabase powers current backend
+- provider/contracts isolate backend dependencies
+- demo/staging receives new behavior first
+- production remains stable until explicit approval
+- migration to custom backend/API later requires provider swap, not UI rewrite

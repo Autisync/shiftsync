@@ -1,50 +1,51 @@
 # PHASE 2 - EXCEL PARSER + SHARED SCHEDULE RECOVERY
 
-## Edge Function: parse-excel
+## Objective
 
-- Parse Excel
-- Map users via employee_code or normalized name
-- Insert shifts
-- Deduplicate
+Deliver upload/import and shared schedule recovery through clean feature/service boundaries with strict consent and privacy controls.
 
-## Extension - Shared Schedule Recovery
+## Scope
 
-1. Store uploads:
-   - hash file
-   - uploader_user_id
-   - consent_to_share
-2. Detect:
-   - identical hashes
-   - > = 2-3 uploads with consent
-3. Mark as:
-   -> verified shared schedule
-4. Notify users without schedules
+### Parser and Upload Boundary
 
-## Edge Function: process-shared-schedule
+- Keep existing parser logic but move under feature/service boundary.
+- Implement upload flow backed by Supabase:
+  - hash file client-side
+  - persist upload metadata in schedule_uploads
+- Add stubs/placeholders for edge processing where needed.
 
-Flow:
+### User Matching Service
 
-- user consents
-- system maps shifts (employee_code or name)
-- insert only user's shifts
-- trigger calendar sync
+- Build service to map shifts to signed-in user by:
+  - employee_code
+  - fallback normalized full_name
 
-Constraints:
+### Shared Recovery
 
-- NEVER expose full schedule
-- MUST require:
+- Build consent-driven shared schedule recovery UI.
+- Enforce:
   - uploader consent
   - receiver consent
+- Never expose full shared schedule to unauthorized users.
+
+### Architecture Compliance
+
+- Upload and recovery must call provider/services, not ad-hoc table calls in UI.
+- Keep production-safe behavior using VITE_ENABLE_SHARED_RECOVERY.
+
+## Adjustments
+- change so that users are able to edit name, employee id and all personal identifier upon first login
 
 ## Analyzer - Phase 2
 
 Validate:
 
-- Excel parsing works
-- No duplicate shifts
-- Shared schedule detection works
-- Minimum consent enforced
-- Only relevant shifts extracted
+- Excel parsing and import path works
+- Upload metadata persists with file hash and consent flags
+- Shift deduplication works
+- Shared schedule detection works (matching hashes with consent)
+- Dual consent enforced
+- Only relevant user shifts are recovered
 
 If any condition fails:
 -> Fix before moving to Phase 3

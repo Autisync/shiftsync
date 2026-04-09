@@ -1,28 +1,39 @@
-# PHASE 3 - CALENDAR SYNC ENGINE
+# PHASE 3 - CALENDAR SYNC ENGINE ABSTRACTION
 
-## Edge Function: calendar-sync
+## Objective
 
-- Fetch DB shifts
-- Fetch Google events
-- Diff:
+Refactor calendar sync into a service abstraction while keeping current working browser-based Google sync behavior intact.
+
+## Scope
+
+### Service Abstraction
+
+- Define CalendarSyncService contract.
+- Implement adapter for current client-side Google sync.
+- Add future server-side sync adapter stub.
+
+### Sync Logic Structure
+
+- Implement idempotent sync flow with diff strategy:
   - create
   - update
-  - delete (optional)
+  - delete (safe and optional)
+- Persist and reuse google_event_id.
+- Prevent duplicate event creation.
 
-- Store google_event_id
-- Ensure idempotency
+### Safety
+
+- Do not remove current working behavior.
+- Isolate new sync paths behind config/adapter selection.
 
 ## Analyzer - Phase 3
 
 Validate:
 
-- No duplicate events
-- Updates do not recreate events
-- Sync is idempotent
-
-## Adjustments
-- change so that users are able to edit name, employee id and all personal identifier upon first login
-- 
+- No duplicate events for idempotent re-sync
+- Updates do not recreate unchanged events
+- google_event_id mapping is stable
+- Adapter selection works without breaking current flow
 
 If any condition fails:
 -> Fix before moving to Phase 4

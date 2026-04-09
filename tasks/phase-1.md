@@ -1,75 +1,93 @@
-# PHASE 1 - DATA FOUNDATION & SUPABASE SETUP
+# PHASE 1 - FOUNDATION: DATA, ENV, PROVIDER BASELINE
 
-## Global Objective
+## Objective
 
-Build a system where:
+Stabilize architecture for Supabase-first today and custom backend tomorrow, without breaking current live behavior.
 
-- Users can swap shifts in under 30 seconds
-- No WhatsApp/manual coordination is required
-- Constraints are enforced automatically
-- Calendar sync is incremental and idempotent
-- Users can request leave directly from the system
-- New users can recover schedules via shared uploads (with consent)
+## Scope
 
-## Core Architecture
+### Architecture Baseline
 
-Frontend:
+- Keep React + Vite + TypeScript as-is.
+- Introduce domain-oriented folders:
+  - src/app
+  - src/features/*
+  - src/shared
+  - src/services
+  - src/config
+  - src/types
 
-- Next.js (App Router, TypeScript, Tailwind)
+### Environment and Config
 
-Backend:
+- Create and wire:
+  - .env.example
+  - .env.local.example
+  - .env.demo.example
+  - .env.production.example
+- Implement typed config helper:
+  - src/config/env.ts
+- Validate required vars:
+  - VITE_SUPABASE_URL
+  - VITE_SUPABASE_ANON_KEY
+  - VITE_BACKEND_MODE
+  - VITE_API_BASE_URL
+  - VITE_APP_ENV
+  - VITE_GOOGLE_CLIENT_ID
+  - VITE_PUBLIC_APP_URL
 
-- Supabase:
-  - PostgreSQL
-  - Auth (Google OAuth)
-  - Edge Functions (Deno)
-  - Realtime
-  - Storage
+### Backend Provider Layer
 
-## OpenAPI Contract (Source of Truth)
+- Create:
+  - src/services/backend/types.ts
+  - src/services/backend/backend-provider.ts
+  - src/services/backend/supabase-provider.ts
+  - src/services/backend/http-provider.ts (stub)
+- Define interfaces:
+  - AuthService
+  - ShiftService
+  - UploadService
+  - SwapService
+  - LeaveService
+  - CalendarSyncService
+  - NotificationService
+- Provider selection via env:
+  - VITE_BACKEND_MODE=supabase|api
 
-[USE EXACT SPEC PROVIDED - DO NOT MODIFY]
+### Data Foundation Completion
 
-## Tables
+- Keep existing migration as source of truth.
+- Ensure TypeScript DB types are complete and consistent.
+- Add repository/service methods for:
+  - users
+  - shifts
+  - swap_availability
+  - swap_requests
+  - leave_requests
+  - schedule_uploads
+  - schedule_access_requests
 
-- users
-- shifts
-- swap_availability
-- swap_requests
-- constraint_logs
-- leave_requests
-- schedule_uploads
-- schedule_access_requests
+### Auth and Route Access
 
-## Requirements
+- Add auth session bootstrap.
+- Load current profile from public.users.
+- Add authenticated route guards.
+- Add loading/error/empty states for core app views.
 
-- users:
-  - employee_code (required)
-- shifts:
-  - google_event_id
-- schedule_uploads:
-  - file_hash
-  - consent_to_share
+## Constraints
 
-## RLS
-
-- Users access only their own shifts
-- Shared schedule logic must not expose full datasets
-
-## Indexes
-
-- shifts(date, user_id)
-- swap_availability(shift_id, is_open)
-- schedule_uploads(file_hash)
+- No live production behavior changes unless behind env/flags.
+- No business logic in page-level components.
+- No direct scattered Supabase access in UI once provider baseline is in place.
 
 ## Analyzer - Phase 1
 
 Validate:
 
-- Schema complete and normalized
-- RLS enforced correctly
-- Indexes present
-- Auth working
+- Environment config validation works
+- Provider selection works (supabase/api modes)
+- Auth bootstrap and profile loading work
+- Repository baseline methods exist for all required entities
+- Build passes with no regressions
 
 If any condition fails:
 -> Fix before moving to Phase 2

@@ -11,9 +11,14 @@ import { LogOut, Settings, History, User } from "lucide-react";
 interface DashboardHeaderProps {
   email: string;
   onLogout: () => void;
+  onOpenSettings?: () => void;
 }
 
-export function DashboardHeader({ email, onLogout }: DashboardHeaderProps) {
+export function DashboardHeader({
+  email,
+  onLogout,
+  onOpenSettings,
+}: DashboardHeaderProps) {
   return (
     <Card className="border-0 shadow-lg bg-gradient-to-br from-blue-50 to-slate-50">
       <CardHeader className="p-4 sm:p-6">
@@ -44,6 +49,7 @@ export function DashboardHeader({ email, onLogout }: DashboardHeaderProps) {
             <Button
               variant="outline"
               size="sm"
+              onClick={onOpenSettings}
               className="gap-1 sm:gap-2 flex-1 sm:flex-initial"
             >
               <Settings className="w-3 h-3 sm:w-4 sm:h-4" />

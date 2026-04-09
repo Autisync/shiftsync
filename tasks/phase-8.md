@@ -1,24 +1,39 @@
-# PHASE 8 - UX FLOWS
+# PHASE 8 - UX FLOW POLISH
 
-## Must Support
+## Objective
 
-- 1-click availability toggle
-- Instant match suggestions
-- 1-click swap request
-- Inbox-style approvals
-- Instant validation feedback
-- 1-click HR submission
-- Leave request UI
-- Schedule recovery UI
+Shape the app into a SaaS-style guided workflow with minimal friction and high discoverability.
+
+## Scope
+
+### Dashboard Workflow
+
+- Auth
+- Upload/import
+- Preview
+- Sync
+- Swap
+- Leave
+
+### UX Improvements
+
+- Authenticated app shell
+- Feature-flag-safe navigation
+- Better upload guidance
+- Shift table/list clarity improvements
+- Swap inbox discoverability
+- Leave request panel
+- Status badges and actionable feedback
+- Empty states and skeleton loaders
 
 ## Analyzer - Phase 8
 
 Validate:
 
-- Swap completed < 30 seconds
-- No manual communication needed
-- Minimal clicks
-- Clear feedback
+- Core user flows are achievable in minimal clicks
+- Navigation and feature discovery are improved
+- Error/success states are clear and consistent
+- Existing live behavior remains unaffected in production mode
 
 If any condition fails:
 -> Optimize before moving to Phase 9

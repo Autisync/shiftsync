@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.47.0";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const CALENDAR_SYNC_ENDPOINT = Deno.env.get("CALENDAR_SYNC_ENDPOINT") || "";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -10,20 +11,36 @@ interface ProcessSharedScheduleRequest {
   receiver_user_id: string;
 }
 
+interface RecoveryShift {
+  employee_id?: string;
+  employee_name?: string;
+  date: string;
+  starts_at: string;
+  ends_at: string;
+  role?: string;
+  location?: string;
+}
+
 interface ProcessResponse {
   success: boolean;
   shifts_inserted: number;
   consent_violations: number;
   message: string;
+  calendar_sync_triggered?: boolean;
 }
 
-// Verify consent from both uploader and receiver
+function normalizeEmployeeName(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[^\w\s]/g, "");
+}
+
 async function verifyConsent(
   uploadId: string,
-  uploaderUserId: string,
   receiverUserId: string,
 ): Promise<{ valid: boolean; reason?: string }> {
-  // Check upload consent
   const { data: upload, error: uploadError } = await supabase
     .from("schedule_uploads")
     .select("id, uploader_user_id, consent_to_share")
@@ -38,36 +55,48 @@ async function verifyConsent(
     return { valid: false, reason: "Uploader has not consented to share" };
   }
 
-  // Check if uploader and receiver are different
   if (upload.uploader_user_id === receiverUserId) {
-    return { valid: false, reason: "Cannot share schedule with self" };
+    return { valid: false, reason: "Cannot process shared schedule for uploader itself" };
   }
 
-  // Check receiver consent (via schedule_access_requests if implemented)
-  // For MVP: allow if uploader has consent_to_share
+  const { data: accessRequest, error: accessError } = await supabase
+    .from("schedule_access_requests")
+    .select("id, consent_given, status")
+    .eq("schedule_upload_id", uploadId)
+    .eq("requester_user_id", receiverUserId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (accessError) {
+    return { valid: false, reason: `Failed to verify receiver consent: ${accessError.message}` };
+  }
+
+  if (!accessRequest) {
+    return { valid: false, reason: "Receiver consent/request not found" };
+  }
+
+  if (!accessRequest.consent_given || accessRequest.status !== "approved") {
+    return { valid: false, reason: "Receiver consent not approved" };
+  }
+
   return { valid: true };
 }
 
-// Extract only relevant shifts for the receiver
 async function extractRelevantShifts(
   uploadId: string,
   receiverUserId: string,
-): Promise<{ shifts: any[]; error?: string }> {
-  // Get all shifts from this upload
-  const { data: shifts, error } = await supabase
-    .from("shifts")
-    .select("*")
-    .eq("source_upload_id", uploadId);
+): Promise<{ shifts: RecoveryShift[]; error?: string }> {
+  const { data: upload, error: uploadError } = await supabase
+    .from("schedule_uploads")
+    .select("metadata")
+    .eq("id", uploadId)
+    .single();
 
-  if (error) {
-    return { shifts: [], error: error.message };
+  if (uploadError || !upload) {
+    return { shifts: [], error: "Upload metadata not found" };
   }
 
-  if (!shifts) {
-    return { shifts: [], error: "No shifts found in upload" };
-  }
-
-  // Get receiver's employee info to match shifts
   const { data: receiver, error: receiverError } = await supabase
     .from("users")
     .select("id, employee_code, full_name")
@@ -78,73 +107,86 @@ async function extractRelevantShifts(
     return { shifts: [], error: "Receiver not found" };
   }
 
-  // Filter shifts belonging to receiver
-  // Match logic: shifts where user_id matches or role/location matches receiver's profile
-  const relevantShifts = shifts.filter((shift) => {
-    // Only shifts NOT already assigned to this user
-    return shift.user_id !== receiverUserId;
+  const payload = upload.metadata?.parsed_payload;
+  if (!Array.isArray(payload)) {
+    return { shifts: [], error: "No parsed payload available in upload metadata" };
+  }
+
+  const receiverCode = normalizeEmployeeName(receiver.employee_code || "");
+  const receiverName = normalizeEmployeeName(receiver.full_name || "");
+
+  const relevant = (payload as RecoveryShift[]).filter((shift) => {
+    const shiftCode = normalizeEmployeeName(shift.employee_id || "");
+    const shiftName = normalizeEmployeeName(shift.employee_name || "");
+
+    return (receiverCode && shiftCode === receiverCode) ||
+      (receiverName && shiftName === receiverName);
   });
 
-  return { shifts: relevantShifts };
+  return { shifts: relevant };
 }
 
-// Insert shifts for receiver while preserving data integrity
 async function insertShiftsForReceiver(
-  shifts: any[],
+  shifts: RecoveryShift[],
   receiverUserId: string,
   uploadId: string,
-): Promise<{ inserted: number; errors: string[] }> {
-  const inserted_count = 0;
+): Promise<{ inserted: number; duplicates: number; errors: string[] }> {
   const errors: string[] = [];
 
   if (shifts.length === 0) {
-    return {
-      inserted: inserted_count,
-      errors: ["No relevant shifts to insert"],
-    };
+    return { inserted: 0, duplicates: 0, errors: ["No relevant shifts found for receiver"] };
   }
 
-  // Prepare shifts with receiver's user_id
-  const shiftsForReceiver = shifts
-    .map((shift) => ({
-      user_id: receiverUserId,
-      date: shift.date,
-      starts_at: shift.starts_at,
-      ends_at: shift.ends_at,
-      role: shift.role,
-      location: shift.location,
-      source_upload_id: uploadId,
-      // Do NOT copy google_event_id - each user syncs independently
-    }))
-    .filter((s) => {
-      // Skip duplicates
-      return s;
-    });
+  const rows = shifts.map((shift) => ({
+    user_id: receiverUserId,
+    date: shift.date,
+    starts_at: shift.starts_at,
+    ends_at: shift.ends_at,
+    role: shift.role,
+    location: shift.location,
+    source_upload_id: uploadId,
+  }));
 
-  if (shiftsForReceiver.length === 0) {
-    return { inserted: 0, errors: ["All shifts already exist for receiver"] };
+  const { data, error } = await supabase
+    .from("shifts")
+    .upsert(rows, {
+      onConflict: "user_id,starts_at,ends_at",
+      ignoreDuplicates: true,
+    })
+    .select("id", { count: "exact" });
+
+  if (error) {
+    errors.push(error.message);
+    return { inserted: 0, duplicates: 0, errors };
+  }
+
+  const inserted = data?.length || 0;
+  const duplicates = rows.length - inserted;
+
+  return { inserted, duplicates, errors };
+}
+
+async function triggerCalendarSync(receiverUserId: string): Promise<boolean> {
+  if (!CALENDAR_SYNC_ENDPOINT) {
+    return false;
   }
 
   try {
-    const { error, count } = await supabase
-      .from("shifts")
-      .insert(shiftsForReceiver)
-      .select("id", { count: "exact" });
+    const response = await fetch(CALENDAR_SYNC_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+      body: JSON.stringify({
+        user_id: receiverUserId,
+        reason: "shared_schedule_recovery",
+      }),
+    });
 
-    if (error) {
-      // Check if it's a duplicate key violation
-      if (error.message.includes("shifts_user_id_starts_at_ends_at_key")) {
-        errors.push("Some shifts already exist (duplicate detection)");
-        // Return partial success if some inserted
-        return { inserted: shiftsForReceiver.length, errors };
-      }
-      errors.push(error.message);
-    }
-
-    return { inserted: count || 0, errors };
-  } catch (e) {
-    errors.push(e.message);
-    return { inserted: 0, errors };
+    return response.ok;
+  } catch {
+    return false;
   }
 }
 
@@ -165,8 +207,7 @@ Deno.serve(async (req) => {
           success: false,
           shifts_inserted: 0,
           consent_violations: 0,
-          message:
-            "Missing required fields: shared_upload_id, receiver_user_id",
+          message: "Missing required fields: shared_upload_id, receiver_user_id",
         } as ProcessResponse),
         {
           status: 400,
@@ -175,35 +216,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get upload info
-    const { data: upload, error: uploadError } = await supabase
-      .from("schedule_uploads")
-      .select("id, uploader_user_id")
-      .eq("id", body.shared_upload_id)
-      .single();
-
-    if (uploadError || !upload) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          shifts_inserted: 0,
-          consent_violations: 1,
-          message: "Upload not found",
-        } as ProcessResponse),
-        {
-          status: 404,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    }
-
-    // CONSTRAINT: Verify consent from both uploader and receiver
-    const consentCheck = await verifyConsent(
-      body.shared_upload_id,
-      upload.uploader_user_id,
-      body.receiver_user_id,
-    );
-
+    const consentCheck = await verifyConsent(body.shared_upload_id, body.receiver_user_id);
     if (!consentCheck.valid) {
       return new Response(
         JSON.stringify({
@@ -219,7 +232,6 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Extract only relevant shifts
     const { shifts, error: extractError } = await extractRelevantShifts(
       body.shared_upload_id,
       body.receiver_user_id,
@@ -240,30 +252,31 @@ Deno.serve(async (req) => {
       );
     }
 
-    // CONSTRAINT: Never expose full schedule - only insert user's relevant shifts
-    const { inserted, errors } = await insertShiftsForReceiver(
+    const { inserted, duplicates, errors } = await insertShiftsForReceiver(
       shifts,
       body.receiver_user_id,
       body.shared_upload_id,
     );
+
+    const calendarSyncTriggered = await triggerCalendarSync(body.receiver_user_id);
 
     return new Response(
       JSON.stringify({
         success: inserted > 0,
         shifts_inserted: inserted,
         consent_violations: 0,
+        calendar_sync_triggered: calendarSyncTriggered,
         message:
           inserted > 0
-            ? `Successfully inserted ${inserted} shifts for receiver`
-            : `Failed to insert shifts: ${errors.join(", ")}`,
+            ? `Inserted ${inserted} shifts for receiver (duplicates skipped: ${duplicates}).`
+            : `No shifts inserted. ${errors.join("; ")}`,
       } as ProcessResponse),
       {
-        status: inserted > 0 ? 200 : 400,
+        status: 200,
         headers: { "Content-Type": "application/json" },
       },
     );
   } catch (error) {
-    console.error("Function error:", error);
     return new Response(
       JSON.stringify({
         success: false,

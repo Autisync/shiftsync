@@ -1,31 +1,35 @@
 # PHASE 6 - CONSTRAINT ENGINE
 
-## Rules
+## Objective
 
-- Max 60 hours/week
-- Max 6 consecutive days
-- Optional: 11h rest
+Implement pure validation engine for scheduling/swap constraints with structured violations and no side effects.
 
-## Edge Function: validate-swap
+## Scope
 
-- Simulate swap
-- DO NOT persist
+### Validation Service
 
-Return:
+- Pure functions, no DB mutation during validation.
+- Rules:
+  - max 60 hours/week
+  - max 6 consecutive days
+  - optional minimum 11h rest behind feature flag
 
-```json
+### Output
+
+Return structured result:
+
 {
-  "valid": true,
-  "violations": []
+  valid: boolean,
+  violations: Array<{ code: string; message: string; details?: unknown }>
 }
-```
 
 ## Analyzer - Phase 6
 
 Validate:
 
-- Violations correctly detected
-- No DB mutations occur
+- Violations are detected accurately
+- No DB writes occur during validation calls
+- Optional 11h rule toggles correctly via flag
 
 If any condition fails:
 -> Fix before moving to Phase 7

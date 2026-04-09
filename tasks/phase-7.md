@@ -1,43 +1,37 @@
-# PHASE 7 - HR AUTOMATION (SWAPS + LEAVE)
+# PHASE 7 - LEAVE REQUESTS + HR AUTOMATION PREP
 
-## Swap Email
+## Objective
 
-Edge Function: send-to-hr
+Deliver leave workflow and notification abstraction without coupling transport logic to UI.
 
-- structured email
-- triggered after valid swap
+## Scope
 
-## Extension - Leave Requests
+### Leave Workflow
 
-### Table: leave_requests
+- Create leave request UI and service
+- Validate conflicts against shifts/swap constraints
+- Support status transitions:
+  - pending -> approved
+  - pending -> rejected
 
-Fields:
+### Notification Abstraction
 
-- user_id
-- start_date
-- end_date
-- type
-- status
+- Introduce HR notification abstraction service
+- Use stub or Supabase-trigger-friendly wiring for now
+- Do not hardcode email transport in frontend components
 
-### Edge Function: request-leave
+### Feature Safety
 
-- create request
-- validate conflicts
-
-### Edge Function: process-leave
-
-- approve/reject
-- update shifts
-- trigger calendar sync
+- Gate leave workflow with VITE_ENABLE_LEAVE
 
 ## Analyzer - Phase 7
 
 Validate:
 
-- Emails sent correctly
-- Leave requests function correctly
-- Calendar updates reflect leave
-- No conflicting shifts remain
+- Leave request creation and transition rules are correct
+- Conflict validation works
+- Notification abstraction is invoked through service contracts
+- No UI hard dependency on specific email provider
 
 If any condition fails:
 -> Fix before moving to Phase 8
