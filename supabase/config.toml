@@ -12,3 +12,9 @@ additional_redirect_urls = [
 enabled = true
 client_id = "env(SUPABASE_AUTH_GOOGLE_CLIENT_ID)"
 secret = "env(SUPABASE_AUTH_GOOGLE_CLIENT_SECRET)"
+
+[functions."parse-excel"]
+verify_jwt = false
+
+[functions."process-shared-schedule"]
+verify_jwt = false

@@ -83,7 +83,9 @@ const ScrollToTopButton = () => {
 function App() {
   return (
     <Suspense
-      fallback={<div className="min-h-screen bg-autisync-surface" aria-hidden="true" />}
+      fallback={
+        <div className="min-h-screen bg-autisync-surface" aria-hidden="true" />
+      }
     >
       <>
         <VersionUpdateBanner />

@@ -20,5 +20,9 @@ Validate:
 - Updates do not recreate events
 - Sync is idempotent
 
+## Adjustments
+- change so that users are able to edit name, employee id and all personal identifier upon first login
+- 
+
 If any condition fails:
 -> Fix before moving to Phase 4
