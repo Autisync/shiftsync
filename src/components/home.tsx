@@ -10,6 +10,13 @@ import { SuccessModal } from "@/components/sync/success-modal";
 import { ShiftData, SyncSummary } from "@/types/shift";
 import { GoogleCalendarService } from "@/lib/google-calendar";
 import { getErrorMessage } from "@/lib/getErrorMessage";
+import {
+  getSupabaseSession,
+  onSupabaseAuthChange,
+  signInWithSupabaseGoogle,
+  signOutSupabase,
+} from "@/lib/supabase-auth";
+import { isSupabaseConfigured } from "@/lib/supabase-client";
 import { toast } from "sonner";
 import Footer from "../components/Footer";
 
@@ -50,17 +57,68 @@ function Home() {
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
-  // Restore session from localStorage on mount
+  // Restore session from Supabase (preferred) or localStorage fallback on mount.
   useEffect(() => {
-    const storedToken = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
-    const storedEmail = localStorage.getItem(STORAGE_KEYS.USER_EMAIL);
+    let mounted = true;
 
-    if (storedToken && storedEmail) {
-      // Validate token by making a simple API call
-      validateAndRestoreSession(storedToken, storedEmail);
-    } else {
-      setIsRestoringSession(false);
+    const restoreSession = async () => {
+      try {
+        if (isSupabaseConfigured) {
+          const session = await getSupabaseSession();
+
+          if (session?.user) {
+            const providerAccessToken = session.provider_token || null;
+            const email = session.user.email || "";
+
+            setAccessToken(providerAccessToken);
+            setUserEmail(email);
+            setCurrentStep("upload");
+
+            if (providerAccessToken) {
+              localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, providerAccessToken);
+            }
+            localStorage.setItem(STORAGE_KEYS.USER_EMAIL, email);
+
+            return;
+          }
+        }
+
+        const storedToken = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
+        const storedEmail = localStorage.getItem(STORAGE_KEYS.USER_EMAIL);
+
+        if (storedToken && storedEmail) {
+          await validateAndRestoreSession(storedToken, storedEmail);
+        }
+      } catch {
+        clearSession();
+      } finally {
+        if (mounted) {
+          setIsRestoringSession(false);
+        }
+      }
+    };
+
+    restoreSession();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      return;
     }
+
+    return onSupabaseAuthChange((_event, session) => {
+      if (!session?.user) {
+        return;
+      }
+
+      setUserEmail(session.user.email || "");
+      setAccessToken(session.provider_token || null);
+      setCurrentStep("upload");
+    });
   }, []);
 
   const validateAndRestoreSession = async (token: string, email: string) => {
@@ -147,6 +205,19 @@ function Home() {
     if (!gdprConsent) return;
 
     setAuthLoading(true);
+
+    if (isSupabaseConfigured) {
+      try {
+        const oauthUrl = await signInWithSupabaseGoogle();
+        window.location.assign(oauthUrl);
+      } catch (error) {
+        setAuthLoading(false);
+        toast.error("Falha no login Supabase/Google: " + getErrorMessage(error));
+      }
+
+      return;
+    }
+
     googleLogin();
   };
 
@@ -229,7 +300,15 @@ function Home() {
     setCurrentStep("upload");
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (isSupabaseConfigured) {
+      try {
+        await signOutSupabase();
+      } catch (error) {
+        toast.error("Falha ao terminar sessão Supabase: " + getErrorMessage(error));
+      }
+    }
+
     clearSession();
     setSelectedCalendar(null);
     setShifts([]);

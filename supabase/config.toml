@@ -1,0 +1,14 @@
+project_id = "shiftsync"
+
+[auth]
+enable_signup = true
+enable_anonymous_sign_ins = false
+site_url = "http://localhost:5173"
+additional_redirect_urls = [
+  "http://localhost:5173/home"
+]
+
+[auth.external.google]
+enabled = true
+client_id = "env(SUPABASE_AUTH_GOOGLE_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_GOOGLE_CLIENT_SECRET)"

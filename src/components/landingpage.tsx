@@ -7,6 +7,7 @@ import {
   useInView,
   AnimatePresence,
 } from "framer-motion";
+import type { Variants } from "framer-motion";
 import Footer from "./Footer";
 
 // Animation variants
@@ -41,6 +42,11 @@ const ScrollReveal = ({
   variant = fadeInUp,
   delay = 0,
   className = "",
+}: {
+  children: React.ReactNode;
+  variant?: Variants;
+  delay?: number;
+  className?: string;
 }) => {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, margin: "-100px" });
@@ -77,7 +83,7 @@ const Landing = () => {
   }, []);
 
   // Smooth scroll handler
-  const scrollToSection = (sectionId) => {
+  const scrollToSection = (sectionId: string) => {
     const element = document.getElementById(sectionId);
     if (element) {
       const offsetTop = element.offsetTop - 80; // Account for fixed navbar

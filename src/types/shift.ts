@@ -4,8 +4,8 @@ export interface ShiftData {
   date: Date;
   startTime: string;
   endTime: string;
-  shiftType: 'morning' | 'afternoon' | 'night' | 'off' | 'other';
-  status: 'active' | 'modified' | 'deleted';
+  shiftType: "morning" | "afternoon" | "night" | "off" | "other";
+  status: "active" | "modified" | "deleted";
   notes?: string;
   googleEventId?: string;
   // Extended fields for Concentrix format
@@ -26,7 +26,7 @@ export interface EmployeeSchedule {
 
 export interface ParsedScheduleResult {
   employees: EmployeeSchedule[];
-  format: 'concentrix-wide' | 'simple';
+  format: "concentrix-wide" | "vodafone-airport" | "simple";
 }
 
 export interface CalendarEvent {
