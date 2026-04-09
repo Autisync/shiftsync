@@ -21,7 +21,7 @@ interface ProcessResponse {
 async function verifyConsent(
   uploadId: string,
   uploaderUserId: string,
-  receiverUserId: string
+  receiverUserId: string,
 ): Promise<{ valid: boolean; reason?: string }> {
   // Check upload consent
   const { data: upload, error: uploadError } = await supabase
@@ -51,7 +51,7 @@ async function verifyConsent(
 // Extract only relevant shifts for the receiver
 async function extractRelevantShifts(
   uploadId: string,
-  receiverUserId: string
+  receiverUserId: string,
 ): Promise<{ shifts: any[]; error?: string }> {
   // Get all shifts from this upload
   const { data: shifts, error } = await supabase
@@ -92,13 +92,16 @@ async function extractRelevantShifts(
 async function insertShiftsForReceiver(
   shifts: any[],
   receiverUserId: string,
-  uploadId: string
+  uploadId: string,
 ): Promise<{ inserted: number; errors: string[] }> {
   const inserted_count = 0;
   const errors: string[] = [];
 
   if (shifts.length === 0) {
-    return { inserted: inserted_count, errors: ["No relevant shifts to insert"] };
+    return {
+      inserted: inserted_count,
+      errors: ["No relevant shifts to insert"],
+    };
   }
 
   // Prepare shifts with receiver's user_id
@@ -162,12 +165,13 @@ Deno.serve(async (req) => {
           success: false,
           shifts_inserted: 0,
           consent_violations: 0,
-          message: "Missing required fields: shared_upload_id, receiver_user_id",
+          message:
+            "Missing required fields: shared_upload_id, receiver_user_id",
         } as ProcessResponse),
         {
           status: 400,
           headers: { "Content-Type": "application/json" },
-        }
+        },
       );
     }
 
@@ -189,7 +193,7 @@ Deno.serve(async (req) => {
         {
           status: 404,
           headers: { "Content-Type": "application/json" },
-        }
+        },
       );
     }
 
@@ -197,7 +201,7 @@ Deno.serve(async (req) => {
     const consentCheck = await verifyConsent(
       body.shared_upload_id,
       upload.uploader_user_id,
-      body.receiver_user_id
+      body.receiver_user_id,
     );
 
     if (!consentCheck.valid) {
@@ -211,14 +215,14 @@ Deno.serve(async (req) => {
         {
           status: 403,
           headers: { "Content-Type": "application/json" },
-        }
+        },
       );
     }
 
     // Extract only relevant shifts
     const { shifts, error: extractError } = await extractRelevantShifts(
       body.shared_upload_id,
-      body.receiver_user_id
+      body.receiver_user_id,
     );
 
     if (extractError) {
@@ -232,7 +236,7 @@ Deno.serve(async (req) => {
         {
           status: 500,
           headers: { "Content-Type": "application/json" },
-        }
+        },
       );
     }
 
@@ -240,7 +244,7 @@ Deno.serve(async (req) => {
     const { inserted, errors } = await insertShiftsForReceiver(
       shifts,
       body.receiver_user_id,
-      body.shared_upload_id
+      body.shared_upload_id,
     );
 
     return new Response(
@@ -256,7 +260,7 @@ Deno.serve(async (req) => {
       {
         status: inserted > 0 ? 200 : 400,
         headers: { "Content-Type": "application/json" },
-      }
+      },
     );
   } catch (error) {
     console.error("Function error:", error);
@@ -270,7 +274,7 @@ Deno.serve(async (req) => {
       {
         status: 500,
         headers: { "Content-Type": "application/json" },
-      }
+      },
     );
   }
 });

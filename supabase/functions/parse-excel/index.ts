@@ -55,15 +55,20 @@ function normalizeEmployeeName(name: string): string {
 async function hashFile(data: ArrayBuffer): Promise<string> {
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  const hashHex = hashArray
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
   return hashHex;
 }
 
 // Parse Excel and extract shifts
 async function parseExcelContent(
   fileData: ArrayBuffer,
-  employeeMapping: Record<string, string>
-): Promise<{ shifts: ShiftToInsert[]; errors: Array<{ row: number; reason: string }> }> {
+  employeeMapping: Record<string, string>,
+): Promise<{
+  shifts: ShiftToInsert[];
+  errors: Array<{ row: number; reason: string }>;
+}> {
   const shifts: ShiftToInsert[] = [];
   const errors: Array<{ row: number; reason: string }> = [];
 
@@ -77,7 +82,10 @@ async function parseExcelContent(
     // This is a placeholder - in production, use proper XLSX parsing
     // The frontend already has working parsing logic that can be reused
     if (!text.includes("xlsx")) {
-      errors.push({ row: 0, reason: "File does not appear to be valid Excel format" });
+      errors.push({
+        row: 0,
+        reason: "File does not appear to be valid Excel format",
+      });
       return { shifts, errors };
     }
 
@@ -92,7 +100,7 @@ async function parseExcelContent(
 
 // Deduplicate shifts - check for existing shifts
 async function deduplicateShifts(
-  shifts: ShiftToInsert[]
+  shifts: ShiftToInsert[],
 ): Promise<{ newShifts: ShiftToInsert[]; duplicateCount: number }> {
   const newShifts: ShiftToInsert[] = [];
   let duplicateCount = 0;
@@ -124,7 +132,7 @@ async function deduplicateShifts(
 // Map employees to user IDs
 async function mapEmployeesToUsers(
   employeeList: string[],
-  employeeMapping?: Record<string, string>
+  employeeMapping?: Record<string, string>,
 ): Promise<Record<string, string>> {
   const mapping: Record<string, string> = employeeMapping || {};
 
@@ -132,18 +140,24 @@ async function mapEmployeesToUsers(
   const missingEmployees = employeeList.filter((emp) => !mapping[emp]);
 
   if (missingEmployees.length > 0) {
-    const { data: users, error } = await supabase.from("users").select("id, employee_code, full_name");
+    const { data: users, error } = await supabase
+      .from("users")
+      .select("id, employee_code, full_name");
 
     if (!error && users) {
       for (const emp of missingEmployees) {
         const normalized = normalizeEmployeeName(emp);
 
         // Try exact employee_code match first
-        let match = users.find((u) => u.employee_code?.toLowerCase() === normalized);
+        let match = users.find(
+          (u) => u.employee_code?.toLowerCase() === normalized,
+        );
 
         // Try normalized full_name match
         if (!match) {
-          match = users.find((u) => normalizeEmployeeName(u.full_name || "") === normalized);
+          match = users.find(
+            (u) => normalizeEmployeeName(u.full_name || "") === normalized,
+          );
         }
 
         if (match) {
@@ -157,7 +171,10 @@ async function mapEmployeesToUsers(
 }
 
 // Insert shifts in batch
-async function insertShifts(shifts: ShiftToInsert[], uploadId: string): Promise<number> {
+async function insertShifts(
+  shifts: ShiftToInsert[],
+  uploadId: string,
+): Promise<number> {
   if (shifts.length === 0) return 0;
 
   const shiftsWithUploadId = shifts.map((s) => ({
@@ -165,7 +182,10 @@ async function insertShifts(shifts: ShiftToInsert[], uploadId: string): Promise<
     source_upload_id: uploadId,
   }));
 
-  const { data, error } = await supabase.from("shifts").insert(shiftsWithUploadId).select();
+  const { data, error } = await supabase
+    .from("shifts")
+    .insert(shiftsWithUploadId)
+    .select();
 
   if (error) {
     console.error("Insert error:", error);
@@ -192,7 +212,7 @@ Deno.serve(async (req) => {
         {
           status: 400,
           headers: { "Content-Type": "application/json" },
-        }
+        },
       );
     }
 
@@ -205,7 +225,7 @@ Deno.serve(async (req) => {
           {
             status: 400,
             headers: { "Content-Type": "application/json" },
-          }
+          },
         );
       }
 
@@ -215,20 +235,22 @@ Deno.serve(async (req) => {
           success: false,
           created: 0,
           duplicates: 0,
-          errors: [{ row: 0, reason: "File-based parsing not yet implemented" }],
+          errors: [
+            { row: 0, reason: "File-based parsing not yet implemented" },
+          ],
           message: "Please use pre-parsed shifts (parsed_shifts parameter)",
         } as ParseResponse),
         {
           status: 400,
           headers: { "Content-Type": "application/json" },
-        }
+        },
       );
     }
 
     // Calculate file hash from parsed data for deduplication
-    const shiftDataStr = JSON.stringify(body.parsed_shifts.sort((a, b) => 
-      a.starts_at.localeCompare(b.starts_at)
-    ));
+    const shiftDataStr = JSON.stringify(
+      body.parsed_shifts.sort((a, b) => a.starts_at.localeCompare(b.starts_at)),
+    );
     const encoder = new TextEncoder();
     const fileData = encoder.encode(shiftDataStr);
     const fileHash = await hashFile(fileData);
@@ -238,10 +260,13 @@ Deno.serve(async (req) => {
       new Set(
         body.parsed_shifts
           .map((s) => s.employee_name || s.employee_id)
-          .filter(Boolean)
-      )
+          .filter(Boolean),
+      ),
     );
-    const userMapping = await mapEmployeesToUsers(employeeNames, body.employee_mapping);
+    const userMapping = await mapEmployeesToUsers(
+      employeeNames,
+      body.employee_mapping,
+    );
 
     // Convert parsed shifts to insertable format
     const mappedShifts: ShiftToInsert[] = body.parsed_shifts
@@ -281,7 +306,7 @@ Deno.serve(async (req) => {
         {
           status: 400,
           headers: { "Content-Type": "application/json" },
-        }
+        },
       );
     }
 
@@ -299,7 +324,8 @@ Deno.serve(async (req) => {
           parsed_shifts: mappedShifts.length,
           duplicates: duplicateCount,
           mapped_employees: employeeNames.filter((n) => userMapping[n]).length,
-          unmapped_employees: employeeNames.filter((n) => !userMapping[n]).length,
+          unmapped_employees: employeeNames.filter((n) => !userMapping[n])
+            .length,
         },
       })
       .select();
@@ -316,7 +342,7 @@ Deno.serve(async (req) => {
         {
           status: 500,
           headers: { "Content-Type": "application/json" },
-        }
+        },
       );
     }
 
@@ -337,7 +363,7 @@ Deno.serve(async (req) => {
       {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      }
+      },
     );
   } catch (error) {
     console.error("Function error:", error);
@@ -352,7 +378,7 @@ Deno.serve(async (req) => {
       {
         status: 500,
         headers: { "Content-Type": "application/json" },
-      }
+      },
     );
   }
 });

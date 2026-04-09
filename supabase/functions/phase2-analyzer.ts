@@ -1,6 +1,6 @@
 /**
  * Phase 2 Analyzer - Validates all core Phase 2 requirements
- * 
+ *
  * Checks:
  * 1. Excel parsing works (client + server integration)
  * 2. No duplicate shifts are persisted
@@ -51,9 +51,8 @@ function test(name: string, fn: () => void | Promise<void>) {
 }
 
 // Test 1: Parse-excel function signature
-export const testParseExcelSignature = test(
-  "parse-excel accepts parsed_shifts and uploader_user_id",
-  () => {
+export const testParseExcelSignature =
+  test("parse-excel accepts parsed_shifts and uploader_user_id", () => {
     const request = {
       parsed_shifts: [
         {
@@ -72,13 +71,11 @@ export const testParseExcelSignature = test(
     assertExists(request.parsed_shifts);
     assertEquals(request.parsed_shifts.length, 1);
     assertExists(request.uploader_user_id);
-  }
-);
+  });
 
 // Test 2: Deduplication logic
-export const testDeduplicationLogic = test(
-  "Deduplication - identical shifts are rejected",
-  () => {
+export const testDeduplicationLogic =
+  test("Deduplication - identical shifts are rejected", () => {
     const shift1: TestShift = {
       employee_name: "John Doe",
       date: "2026-04-09",
@@ -100,13 +97,11 @@ export const testDeduplicationLogic = test(
       shift1.ends_at === shift2.ends_at;
 
     assert(isDuplicate, "Should detect duplicate shifts");
-  }
-);
+  });
 
 // Test 3: Consent enforcement
-export const testConsentEnforcement = test(
-  "Consent - process-shared-schedule requires uploader consent",
-  () => {
+export const testConsentEnforcement =
+  test("Consent - process-shared-schedule requires uploader consent", () => {
     const uploadWithConsent = {
       consent_to_share: true,
       uploader_user_id: "uploader-1",
@@ -119,19 +114,17 @@ export const testConsentEnforcement = test(
 
     assert(
       uploadWithConsent.consent_to_share,
-      "Upload with consent should be truthy"
+      "Upload with consent should be truthy",
     );
     assert(
       !uploadWithoutConsent.consent_to_share,
-      "Upload without consent should be falsy"
+      "Upload without consent should be falsy",
     );
-  }
-);
+  });
 
 // Test 4: Shared schedule detection (hash matching)
-export const testSharedScheduleDetection = test(
-  "Shared schedule - identical file hashes are detected",
-  () => {
+export const testSharedScheduleDetection =
+  test("Shared schedule - identical file hashes are detected", () => {
     const upload1 = {
       file_hash: "abc123",
       consent_to_share: true,
@@ -149,14 +142,15 @@ export const testSharedScheduleDetection = test(
       upload1.consent_to_share &&
       upload2.consent_to_share;
 
-    assert(isSharedSchedule, "Should detect shared schedule from matching hashes");
-  }
-);
+    assert(
+      isSharedSchedule,
+      "Should detect shared schedule from matching hashes",
+    );
+  });
 
 // Test 5: Shared schedule requires minimum 2 uploads
-export const testSharedScheduleMinimum = test(
-  "Shared schedule - requires >= 2 uploads with consent",
-  () => {
+export const testSharedScheduleMinimum =
+  test("Shared schedule - requires >= 2 uploads with consent", () => {
     const uploads = [
       {
         file_hash: "abc123",
@@ -176,13 +170,11 @@ export const testSharedScheduleMinimum = test(
       new Set(uploads.map((u) => u.file_hash)).size === 1;
 
     assert(isVerifiedShared, "Should verify as shared with 2+ uploads");
-  }
-);
+  });
 
 // Test 6: Relevant shifts extraction (no full schedule exposure)
-export const testRelevantShiftsExtraction = test(
-  "Process-shared-schedule - only extracts shifts for receiver",
-  () => {
+export const testRelevantShiftsExtraction =
+  test("Process-shared-schedule - only extracts shifts for receiver", () => {
     const uploadedShifts = [
       {
         user_id: "john-123",
@@ -204,20 +196,20 @@ export const testRelevantShiftsExtraction = test(
     const receiverUserId = "mary-456";
 
     // Filter to only shifts for this receiver (by matching employee/user)
-    const relevantShifts = uploadedShifts.filter((s) => s.user_id !== receiverUserId);
+    const relevantShifts = uploadedShifts.filter(
+      (s) => s.user_id !== receiverUserId,
+    );
 
     assertEquals(
       relevantShifts.length,
       2,
-      "Should extract non-receiver shifts (constraint: never expose full schedule)"
+      "Should extract non-receiver shifts (constraint: never expose full schedule)",
     );
-  }
-);
+  });
 
 // Test 7: Employee mapping
-export const testEmployeeMappingLogic = test(
-  "Employee mapping - normalizes names and matches to user database",
-  () => {
+export const testEmployeeMappingLogic =
+  test("Employee mapping - normalizes names and matches to user database", () => {
     function normalizeEmployeeName(name: string): string {
       return name
         .toLowerCase()
@@ -239,7 +231,7 @@ export const testEmployeeMappingLogic = test(
       const match = mockUsers.find(
         (u) =>
           normalizeEmployeeName(u.full_name) === normalized ||
-          u.employee_code?.toLowerCase() === normalized
+          u.employee_code?.toLowerCase() === normalized,
       );
       if (match) {
         mapping[emp] = match.id;
@@ -247,14 +239,16 @@ export const testEmployeeMappingLogic = test(
     }
 
     assertEquals(mapping["John Doe"], "1", "Should map John Doe to user 1");
-    assertEquals(mapping["Mary  Smith"], "2", "Should map Mary Smith to user 2");
-  }
-);
+    assertEquals(
+      mapping["Mary  Smith"],
+      "2",
+      "Should map Mary Smith to user 2",
+    );
+  });
 
 // Test 8: Constraint validation - max hours per week
-export const testMaxHoursPerWeek = test(
-  "Constraint - max 60 hours per week enforced",
-  () => {
+export const testMaxHoursPerWeek =
+  test("Constraint - max 60 hours per week enforced", () => {
     const existingHours = 50;
     const newShiftHours = 15;
     const totalHours = existingHours + newShiftHours;
@@ -262,29 +256,25 @@ export const testMaxHoursPerWeek = test(
 
     assert(
       totalHours <= maxHoursPerWeek,
-      `Total hours (${totalHours}) should not exceed max (${maxHoursPerWeek})`
+      `Total hours (${totalHours}) should not exceed max (${maxHoursPerWeek})`,
     );
-  }
-);
+  });
 
 // Test 9: Constraint validation - max consecutive days
-export const testMaxConsecutiveDays = test(
-  "Constraint - max 6 consecutive working days enforced",
-  () => {
+export const testMaxConsecutiveDays =
+  test("Constraint - max 6 consecutive working days enforced", () => {
     const consecutiveDays = 5;
     const maxConsecutiveDays = 6;
 
     assert(
       consecutiveDays <= maxConsecutiveDays,
-      `Consecutive days (${consecutiveDays}) should not exceed max (${maxConsecutiveDays})`
+      `Consecutive days (${consecutiveDays}) should not exceed max (${maxConsecutiveDays})`,
     );
-  }
-);
+  });
 
 // Test 10: Upload metadata includes shared schedule info
-export const testUploadMetadataStructure = test(
-  "Upload metadata - includes parsed shifts, duplicates, mappings",
-  () => {
+export const testUploadMetadataStructure =
+  test("Upload metadata - includes parsed shifts, duplicates, mappings", () => {
     const metadata = {
       parsed_shifts: 5,
       duplicates: 1,
@@ -296,8 +286,7 @@ export const testUploadMetadataStructure = test(
     assertExists(metadata.parsed_shifts);
     assertExists(metadata.duplicates);
     assertExists(metadata.mapped_employees);
-  }
-);
+  });
 
 // Main test runner
 async function runAllTests() {
@@ -333,9 +322,11 @@ async function runAllTests() {
 
   if (passed < total) {
     console.log("\nFailed tests:");
-    results.filter((r) => !r.passed).forEach((r) => {
-      console.log(`  - ${r.name}: ${r.error}`);
-    });
+    results
+      .filter((r) => !r.passed)
+      .forEach((r) => {
+        console.log(`  - ${r.name}: ${r.error}`);
+      });
     Deno.exit(1);
   }
 
