@@ -1,17 +1,18 @@
-import { Suspense, useState, useEffect } from "react";
+import { Suspense, lazy, useState, useEffect } from "react";
 import { Routes, Route, useLocation } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import { motion, AnimatePresence } from "framer-motion";
-import Home from "./components/home";
-import LandingPage from "./components/landingpage";
-import Terms from "./components/terms";
-import Privacy from "./components/privacy";
-import DataDeletion from "./components/datadeletion";
-import Cookies from "./components/cookies";
 import CookieBanner from "@/components/cookies/CookieBanner";
 import CookiePreferencesDialog from "@/components/cookies/CookiePreferencesDialog";
 import ConsentGatedAnalytics from "@/components/cookies/ConsentGatedAnalytics";
 import { VersionUpdateBanner } from "@/components/VersionUpdateBanner";
+
+const Home = lazy(() => import("./components/home"));
+const LandingPage = lazy(() => import("./components/landingpage"));
+const Terms = lazy(() => import("./components/terms"));
+const Privacy = lazy(() => import("./components/privacy"));
+const DataDeletion = lazy(() => import("./components/datadeletion"));
+const Cookies = lazy(() => import("./components/cookies"));
 
 // Global Scroll to Top Button Component
 const ScrollToTopButton = () => {
@@ -81,7 +82,9 @@ const ScrollToTopButton = () => {
 
 function App() {
   return (
-    <Suspense fallback={<p>Loading...</p>}>
+    <Suspense
+      fallback={<div className="min-h-screen bg-autisync-surface" aria-hidden="true" />}
+    >
       <>
         <VersionUpdateBanner />
         <Routes>
