@@ -62,6 +62,12 @@ export type SwapRequestStatus =
   | "submitted_to_hr"
   | "approved";
 
+export interface SwapRequestStatusChange {
+  status: SwapRequestStatus;
+  changedAt: string;
+  changedByUserId: string | null;
+}
+
 export interface SwapRequest {
   id: string;
   requesterUserId: string;
@@ -70,6 +76,12 @@ export interface SwapRequest {
   targetShiftId: string | null;
   status: SwapRequestStatus;
   message: string | null;
+  statusHistory: SwapRequestStatusChange[];
+  pendingAt: string | null;
+  acceptedAt: string | null;
+  rejectedAt: string | null;
+  submittedToHrAt: string | null;
+  approvedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

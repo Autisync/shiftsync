@@ -209,49 +209,67 @@ export interface Database {
       };
       swap_requests: {
         Row: {
+          accepted_at: string | null;
+          approved_at: string | null;
           created_at: string;
           id: string;
           message: string | null;
+          pending_at: string | null;
+          rejected_at: string | null;
           requester_shift_id: string;
           requester_user_id: string;
+          status_history: Json;
           status:
             | "pending"
             | "accepted"
             | "rejected"
             | "submitted_to_hr"
             | "approved";
+          submitted_to_hr_at: string | null;
           target_shift_id: string | null;
           target_user_id: string;
           updated_at: string;
         };
         Insert: {
+          accepted_at?: string | null;
+          approved_at?: string | null;
           created_at?: string;
           id?: string;
           message?: string | null;
+          pending_at?: string | null;
+          rejected_at?: string | null;
           requester_shift_id: string;
           requester_user_id: string;
+          status_history?: Json;
           status?:
             | "pending"
             | "accepted"
             | "rejected"
             | "submitted_to_hr"
             | "approved";
+          submitted_to_hr_at?: string | null;
           target_shift_id?: string | null;
           target_user_id: string;
           updated_at?: string;
         };
         Update: {
+          accepted_at?: string | null;
+          approved_at?: string | null;
           created_at?: string;
           id?: string;
           message?: string | null;
+          pending_at?: string | null;
+          rejected_at?: string | null;
           requester_shift_id?: string;
           requester_user_id?: string;
+          status_history?: Json;
           status?:
             | "pending"
             | "accepted"
             | "rejected"
             | "submitted_to_hr"
             | "approved";
+          submitted_to_hr_at?: string | null;
           target_shift_id?: string | null;
           target_user_id?: string;
           updated_at?: string;

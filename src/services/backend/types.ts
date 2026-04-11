@@ -102,7 +102,11 @@ export interface SwapService {
     message?: string;
   }): Promise<SwapRequest>;
   getSwapRequestsForUser(userId: string): Promise<SwapRequest[]>;
-  updateSwapStatus(id: string, status: SwapRequestStatus): Promise<SwapRequest>;
+  updateSwapStatus(
+    id: string,
+    status: SwapRequestStatus,
+    actorUserId?: string,
+  ): Promise<SwapRequest>;
 }
 
 // ── LeaveService ───────────────────────────────────────────────────────────

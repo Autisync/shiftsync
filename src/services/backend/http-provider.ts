@@ -62,7 +62,8 @@ const httpSwaps: SwapService = {
   getOpenAvailabilities: () => notImplemented("swaps.getOpenAvailabilities"),
   createSwapRequest: () => notImplemented("swaps.createSwapRequest"),
   getSwapRequestsForUser: () => notImplemented("swaps.getSwapRequestsForUser"),
-  updateSwapStatus: () => notImplemented("swaps.updateSwapStatus"),
+  updateSwapStatus: (_id, _status, _actorUserId) =>
+    notImplemented("swaps.updateSwapStatus"),
 };
 
 const httpLeave: LeaveService = {

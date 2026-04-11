@@ -37,6 +37,7 @@ import {
   toSwapAvailability,
   toSwapRequest,
 } from "@/shared/mappers/swap.mapper";
+import { assertSwapStatusTransition } from "@/features/swaps/services/swap-workflow";
 import { toLeaveRequest } from "@/shared/mappers/leave.mapper";
 import {
   toScheduleUpload,
@@ -45,10 +46,13 @@ import {
 import { CalendarSyncService as Phase3CalendarSync } from "@/features/calendar/services/calendarSyncService";
 import type { CalendarSyncRecordRepository } from "@/features/calendar/types";
 import type { ShiftData } from "@/types/shift";
+import { getErrorMessage } from "@/lib/getErrorMessage";
 
 // Helper: throw on Supabase error
 function assertNoError<T>(result: { data: T | null; error: unknown }): T {
-  if (result.error) throw result.error;
+  if (result.error) {
+    throw new Error(getErrorMessage(result.error));
+  }
   if (result.data === null) throw new Error("No data returned");
   return result.data;
 }
@@ -771,13 +775,19 @@ const supabaseSwaps: SwapService = {
   ): Promise<SwapAvailability> {
     const supabase = getSupabaseClient();
     if (!supabase) throw new Error("Supabase client unavailable");
+    const now = new Date().toISOString();
     const { data, error } = await supabase
       .from("swap_availability")
-      .insert({
-        shift_id: shiftId,
-        opened_by_user_id: userId,
-        is_open: true,
-      })
+      .upsert(
+        {
+          shift_id: shiftId,
+          opened_by_user_id: userId,
+          is_open: true,
+          opened_at: now,
+          closed_at: null,
+        },
+        { onConflict: "shift_id" },
+      )
       .select()
       .single();
     return toSwapAvailability(assertNoError({ data, error }));
@@ -818,6 +828,7 @@ const supabaseSwaps: SwapService = {
   }): Promise<SwapRequest> {
     const supabase = getSupabaseClient();
     if (!supabase) throw new Error("Supabase client unavailable");
+    const now = new Date().toISOString();
     const { data, error } = await supabase
       .from("swap_requests")
       .insert({
@@ -827,6 +838,14 @@ const supabaseSwaps: SwapService = {
         target_shift_id: input.targetShiftId ?? null,
         message: input.message ?? null,
         status: "pending",
+        pending_at: now,
+        status_history: [
+          {
+            status: "pending",
+            changed_at: now,
+            changed_by_user_id: input.requesterUserId,
+          },
+        ],
       })
       .select()
       .single();
@@ -848,12 +867,63 @@ const supabaseSwaps: SwapService = {
   async updateSwapStatus(
     id: string,
     status: SwapRequestStatus,
+    actorUserId?: string,
   ): Promise<SwapRequest> {
     const supabase = getSupabaseClient();
     if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data: existingData, error: existingError } = await supabase
+      .from("swap_requests")
+      .select("*")
+      .eq("id", id)
+      .single();
+    const existing = assertNoError({
+      data: existingData,
+      error: existingError,
+    });
+
+    assertSwapStatusTransition(existing.status, status);
+
+    const now = new Date().toISOString();
+    const currentHistory = Array.isArray(existing.status_history)
+      ? existing.status_history
+      : [];
+
+    const patch: {
+      status: SwapRequestStatus;
+      status_history: unknown[];
+      accepted_at?: string | null;
+      rejected_at?: string | null;
+      submitted_to_hr_at?: string | null;
+      approved_at?: string | null;
+    } = {
+      status,
+      status_history: [
+        ...currentHistory,
+        {
+          status,
+          changed_at: now,
+          changed_by_user_id: actorUserId ?? null,
+        },
+      ],
+    };
+
+    if (status === "accepted") {
+      patch.accepted_at = now;
+    }
+    if (status === "rejected") {
+      patch.rejected_at = now;
+    }
+    if (status === "submitted_to_hr") {
+      patch.submitted_to_hr_at = now;
+    }
+    if (status === "approved") {
+      patch.approved_at = now;
+    }
+
     const { data, error } = await supabase
       .from("swap_requests")
-      .update({ status })
+      .update(patch)
       .eq("id", id)
       .select()
       .single();
