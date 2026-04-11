@@ -64,31 +64,31 @@ export function SuccessModal({
       <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex justify-center mb-3 sm:mb-4">
-            <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-green-100 flex items-center justify-center">
-              <CheckCircle2 className="w-8 h-8 sm:w-10 sm:h-10 text-green-600" />
+            <div className="flex items-center justify-center w-12 h-12 bg-green-100 rounded-full sm:w-16 sm:h-16">
+              <CheckCircle2 className="w-8 h-8 text-green-600 sm:w-10 sm:h-10" />
             </div>
           </div>
-          <DialogTitle className="text-center text-xl sm:text-2xl">
+          <DialogTitle className="text-xl text-center sm:text-2xl">
             Sincronizado com Sucesso!
           </DialogTitle>
-          <DialogDescription className="text-center text-sm sm:text-base pt-2">
+          <DialogDescription className="pt-2 text-sm text-center sm:text-base">
             Os seus turnos foram sincronizados com o seu calendário
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-3 sm:py-4">
+        <div className="py-3 space-y-4 sm:py-4">
           {/* Calendar Info */}
           {calendarName && (
-            <div className="bg-slate-50 rounded-lg p-3 sm:p-4 border border-slate-200">
+            <div className="p-3 border rounded-lg bg-slate-50 sm:p-4 border-slate-200">
               <div className="flex items-center gap-2 sm:gap-3">
-                <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
-                  <Calendar className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" />
+                <div className="flex items-center justify-center flex-shrink-0 w-8 h-8 bg-blue-100 rounded-lg sm:w-10 sm:h-10">
+                  <Calendar className="w-4 h-4 text-blue-600 sm:w-5 sm:h-5" />
                 </div>
-                <div className="min-w-0 flex-1">
+                <div className="flex-1 min-w-0">
                   <p className="text-xs text-muted-foreground">
                     Sincronizado com
                   </p>
-                  <p className="font-semibold text-xs sm:text-sm truncate">
+                  <p className="text-xs font-semibold truncate sm:text-sm">
                     {calendarName}
                   </p>
                 </div>
@@ -98,33 +98,34 @@ export function SuccessModal({
 
           {/* Summary Stats */}
           <div className="grid grid-cols-3 gap-2 sm:gap-3">
-            <div className="text-center p-2 sm:p-3 bg-green-50 rounded-lg border border-green-200">
-              <p className="text-xl sm:text-2xl font-bold text-green-900">
+            <div className="p-2 text-center border border-green-200 rounded-lg sm:p-3 bg-green-50">
+              <p className="text-xl font-bold text-green-900 sm:text-2xl">
                 {summary.create}
               </p>
               <p className="text-xs text-green-700">Criados</p>
             </div>
-            <div className="text-center p-2 sm:p-3 bg-blue-50 rounded-lg border border-blue-200">
-              <p className="text-xl sm:text-2xl font-bold text-blue-900">
+            <div className="p-2 text-center border border-blue-200 rounded-lg sm:p-3 bg-blue-50">
+              <p className="text-xl font-bold text-blue-900 sm:text-2xl">
                 {summary.update}
               </p>
               <p className="text-xs text-blue-700">Atualizados</p>
             </div>
-            <div className="text-center p-2 sm:p-3 bg-red-50 rounded-lg border border-red-200">
-              <p className="text-xl sm:text-2xl font-bold text-red-900">
+            <div className="p-2 text-center border border-red-200 rounded-lg sm:p-3 bg-red-50">
+              <p className="text-xl font-bold text-red-900 sm:text-2xl">
                 {summary.delete}
               </p>
               <p className="text-xs text-red-700">Eliminados</p>
             </div>
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-white p-3 sm:p-4 space-y-2">
-            <p className="text-xs sm:text-sm font-semibold text-slate-900">
+{/* Resultado da Sincronização */}
+          {/* <div className="p-3 space-y-2 bg-white border rounded-lg border-slate-200 sm:p-4">
+            <p className="text-xs font-semibold sm:text-sm text-slate-900">
               Resultado da Sincronização
             </p>
 
-            <details className="rounded border border-green-200 bg-green-50 px-3 py-2">
-              <summary className="cursor-pointer text-sm font-medium text-green-900">
+            <details className="px-3 py-2 border border-green-200 rounded bg-green-50">
+              <summary className="text-sm font-medium text-green-900 cursor-pointer">
                 ✅ Criados: {summary.create} evento
                 {summary.create === 1 ? "" : "s"}
               </summary>
@@ -143,8 +144,8 @@ export function SuccessModal({
               </div>
             </details>
 
-            <details className="rounded border border-blue-200 bg-blue-50 px-3 py-2">
-              <summary className="cursor-pointer text-sm font-medium text-blue-900">
+            <details className="px-3 py-2 border border-blue-200 rounded bg-blue-50">
+              <summary className="text-sm font-medium text-blue-900 cursor-pointer">
                 🔄 Atualizados: {summary.update} evento
                 {summary.update === 1 ? "" : "s"}
               </summary>
@@ -163,8 +164,8 @@ export function SuccessModal({
               </div>
             </details>
 
-            <details className="rounded border border-red-200 bg-red-50 px-3 py-2">
-              <summary className="cursor-pointer text-sm font-medium text-red-900">
+            <details className="px-3 py-2 border border-red-200 rounded bg-red-50">
+              <summary className="text-sm font-medium text-red-900 cursor-pointer">
                 ❌ Eliminados: {summary.delete} evento
                 {summary.delete === 1 ? "" : "s"}
               </summary>
@@ -182,21 +183,21 @@ export function SuccessModal({
                 )}
               </div>
             </details>
-          </div>
+          </div> */}
 
           {/* Action Buttons */}
-          <div className="space-y-2 pt-2">
+          <div className="pt-2 space-y-2">
             <Button
               onClick={onNewSync}
-              className="w-full h-10 sm:h-12 font-semibold text-sm sm:text-base"
+              className="w-full h-10 text-sm font-semibold sm:h-12 sm:text-base"
             >
-              <ArrowRight className="w-3 h-3 sm:w-4 sm:h-4 mr-2" />
+              <ArrowRight className="w-3 h-3 mr-2 sm:w-4 sm:h-4" />
               Sincronizar Outro Ficheiro
             </Button>
             <Button
               onClick={onClose}
               variant="outline"
-              className="w-full h-10 sm:h-auto text-sm sm:text-base"
+              className="w-full h-10 text-sm sm:h-auto sm:text-base"
             >
               Voltar ao Painel
             </Button>
