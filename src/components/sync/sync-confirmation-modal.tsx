@@ -31,14 +31,33 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { getErrorMessage } from "@/lib/getErrorMessage";
 import { toast } from "sonner";
+import type { CalendarSyncPreviewChange } from "@/features/calendar/types";
 
 const STORAGE_KEY_SELECTED_CALENDAR = "selected_calendar_id";
 
 interface SyncConfirmationModalProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (calendarId: string, calendarSummary?: string) => void;
-  summary: SyncSummary;
+  onConfirm: (input: {
+    calendarId: string;
+    calendarSummary?: string;
+    options: {
+      dateRange?: { start: string; end: string };
+      fullResync: boolean;
+      removeStaleEvents: boolean;
+    };
+  }) => void;
+  summary: SyncSummary & { noop?: number; failed?: number };
+  changes: CalendarSyncPreviewChange[];
+  onRequestPreview: (input: {
+    calendarId: string;
+    options: {
+      dateRange?: { start: string; end: string };
+      fullResync: boolean;
+      removeStaleEvents: boolean;
+    };
+  }) => Promise<void>;
+  previewLoading?: boolean;
   loading?: boolean;
   accessToken: string;
   initialCalendarId?: string | null;
@@ -50,6 +69,9 @@ export function SyncConfirmationModal({
   onClose,
   onConfirm,
   summary,
+  changes,
+  onRequestPreview,
+  previewLoading,
   loading,
   accessToken,
   initialCalendarId,
@@ -66,6 +88,11 @@ export function SyncConfirmationModal({
   const [calendarsError, setCalendarsError] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [creatingCalendar, setCreatingCalendar] = useState(false);
+  const [fullResync, setFullResync] = useState(false);
+  const [removeStaleEvents, setRemoveStaleEvents] = useState(true);
+  const [rangePreset, setRangePreset] = useState<
+    "auto" | "this-week" | "next-week" | "this-month"
+  >("auto");
 
   // Fetch calendars when modal opens
   useEffect(() => {
@@ -170,12 +197,70 @@ export function SyncConfirmationModal({
 
   const handleConfirm = () => {
     if (selectedCalendarId) {
-      onConfirm(selectedCalendarId, selectedCalendar?.summary);
+      onConfirm({
+        calendarId: selectedCalendarId,
+        calendarSummary: selectedCalendar?.summary,
+        options: {
+          dateRange: resolveDateRange(rangePreset),
+          fullResync,
+          removeStaleEvents,
+        },
+      });
     }
+  };
+
+  const resolveDateRange = (
+    preset: "auto" | "this-week" | "next-week" | "this-month",
+  ): { start: string; end: string } | undefined => {
+    if (preset === "auto") {
+      return undefined;
+    }
+
+    const today = new Date();
+    const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+    const end = new Date(start);
+
+    if (preset === "this-week") {
+      const day = (start.getUTCDay() + 6) % 7;
+      start.setUTCDate(start.getUTCDate() - day);
+      end.setUTCDate(start.getUTCDate() + 6);
+    }
+
+    if (preset === "next-week") {
+      const day = (start.getUTCDay() + 6) % 7;
+      start.setUTCDate(start.getUTCDate() - day + 7);
+      end.setUTCDate(start.getUTCDate() + 6);
+    }
+
+    if (preset === "this-month") {
+      start.setUTCDate(1);
+      end.setUTCFullYear(start.getUTCFullYear(), start.getUTCMonth() + 1, 0);
+    }
+
+    return {
+      start: start.toISOString().slice(0, 10),
+      end: end.toISOString().slice(0, 10),
+    };
+  };
+
+  const handleRefreshPreview = async () => {
+    if (!selectedCalendarId) {
+      return;
+    }
+
+    await onRequestPreview({
+      calendarId: selectedCalendarId,
+      options: {
+        dateRange: resolveDateRange(rangePreset),
+        fullResync,
+        removeStaleEvents,
+      },
+    });
   };
 
   const selectedCalendar = calendars.find((c) => c.id === selectedCalendarId);
   const canSync = selectedCalendarId && !calendarsLoading && !loading;
+  const visibleChanges = changes.filter((item) => item.type !== "noop").slice(0, 12);
 
   return (
     <>
@@ -318,6 +403,65 @@ export function SyncConfirmationModal({
                 )}
             </div>
 
+            {/* Sync Controls */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-medium text-slate-700">
+                    Janela de Sincronização
+                  </label>
+                  <Select
+                    value={rangePreset}
+                    onValueChange={(value) =>
+                      setRangePreset(
+                        value as "auto" | "this-week" | "next-week" | "this-month",
+                      )
+                    }
+                  >
+                    <SelectTrigger className="h-9 text-xs mt-1">
+                      <SelectValue placeholder="Escolher janela" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Auto (período importado)</SelectItem>
+                      <SelectItem value="this-week">Esta semana</SelectItem>
+                      <SelectItem value="next-week">Próxima semana</SelectItem>
+                      <SelectItem value="this-month">Este mês</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full h-9 text-xs"
+                    disabled={!selectedCalendarId || previewLoading}
+                    onClick={handleRefreshPreview}
+                  >
+                    {previewLoading ? "A calcular..." : "Atualizar Pré-visualização"}
+                  </Button>
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 text-xs text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={fullResync}
+                  onChange={(event) => setFullResync(event.target.checked)}
+                />
+                Full resync (recalcular tudo dentro da janela)
+              </label>
+
+              <label className="flex items-center gap-2 text-xs text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={removeStaleEvents}
+                  onChange={(event) => setRemoveStaleEvents(event.target.checked)}
+                />
+                Remover eventos ShiftSync antigos que já não existem neste horário
+              </label>
+            </div>
+
             {/* Summary Cards */}
             <div className="grid grid-cols-3 gap-2 sm:gap-3">
               <div className="bg-green-50 rounded-lg p-3 sm:p-4 border border-green-200">
@@ -400,6 +544,66 @@ export function SyncConfirmationModal({
                   {totalChanges}
                 </span>
               </div>
+              <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
+                <span>Sem alterações (noop): {summary.noop ?? 0}</span>
+                <span>Falhas previstas: {summary.failed ?? 0}</span>
+              </div>
+            </div>
+
+            {/* Detailed preview list */}
+            <div className="rounded-lg border border-slate-200 bg-white p-3 sm:p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-semibold text-xs sm:text-sm text-slate-900">
+                  Pré-visualização de alterações
+                </span>
+                <span className="text-xs text-slate-500">
+                  {visibleChanges.length}/{Math.max(changes.filter((item) => item.type !== "noop").length, 0)}
+                </span>
+              </div>
+
+              {visibleChanges.length === 0 ? (
+                <p className="text-xs text-slate-500">Sem alterações materiais para aplicar.</p>
+              ) : (
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  {visibleChanges.map((item, index) => {
+                    const badgeClass =
+                      item.type === "create"
+                        ? "bg-green-100 text-green-700"
+                        : item.type === "update"
+                          ? "bg-blue-100 text-blue-700"
+                          : "bg-red-100 text-red-700";
+
+                    return (
+                      <div
+                        key={`${item.syncShiftKey ?? "unknown"}-${index}`}
+                        className="rounded-md border border-slate-200 px-2 py-2"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`text-[10px] uppercase tracking-wide font-semibold px-2 py-0.5 rounded ${badgeClass}`}>
+                            {item.type}
+                          </span>
+                          <span className="text-[11px] text-slate-500 truncate">
+                            {item.date ?? "sem data"}
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-slate-800 mt-1 truncate">
+                          {item.title ?? "Evento de turno"}
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                          {item.location ?? "Sem localização"}
+                        </p>
+                        <p className="text-[11px] text-slate-500 truncate">
+                          {item.start ? new Date(item.start).toLocaleString() : "-"} - {item.end ? new Date(item.end).toLocaleString() : "-"}
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                          {item.reason}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
 

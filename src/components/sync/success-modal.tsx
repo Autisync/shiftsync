@@ -8,13 +8,43 @@ import {
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Calendar, ArrowRight } from "lucide-react";
 import { SyncSummary } from "@/types/shift";
+import type { CalendarSyncPreviewChange } from "@/features/calendar/types";
 
 interface SuccessModalProps {
   open: boolean;
   onClose: () => void;
   onNewSync: () => void;
   summary: SyncSummary;
+  changes: CalendarSyncPreviewChange[];
   calendarName?: string;
+}
+
+function formatShiftLine(item: CalendarSyncPreviewChange): string {
+  const source = item.start ?? item.date;
+  if (!source) {
+    return item.title ?? "Turno";
+  }
+
+  const date = new Date(source);
+  const day = date.toLocaleDateString("pt-PT", {
+    day: "2-digit",
+    month: "short",
+  });
+
+  if (!item.start || !item.end) {
+    return `${day} ${item.title ?? "Turno"}`;
+  }
+
+  const start = new Date(item.start).toLocaleTimeString("pt-PT", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const end = new Date(item.end).toLocaleTimeString("pt-PT", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  return `${day} ${start}-${end}`;
 }
 
 export function SuccessModal({
@@ -22,11 +52,16 @@ export function SuccessModal({
   onClose,
   onNewSync,
   summary,
+  changes,
   calendarName,
 }: SuccessModalProps) {
+  const createdChanges = changes.filter((item) => item.type === "create");
+  const updatedChanges = changes.filter((item) => item.type === "update");
+  const deletedChanges = changes.filter((item) => item.type === "delete");
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex justify-center mb-3 sm:mb-4">
             <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-green-100 flex items-center justify-center">
@@ -81,6 +116,72 @@ export function SuccessModal({
               </p>
               <p className="text-xs text-red-700">Eliminados</p>
             </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-white p-3 sm:p-4 space-y-2">
+            <p className="text-xs sm:text-sm font-semibold text-slate-900">
+              Resultado da Sincronização
+            </p>
+
+            <details className="rounded border border-green-200 bg-green-50 px-3 py-2">
+              <summary className="cursor-pointer text-sm font-medium text-green-900">
+                ✅ Criados: {summary.create} evento
+                {summary.create === 1 ? "" : "s"}
+              </summary>
+              <div className="mt-2 space-y-1 text-xs text-green-800">
+                {createdChanges.length === 0 ? (
+                  <p>Sem novos turnos criados.</p>
+                ) : (
+                  createdChanges.map((item, index) => (
+                    <p
+                      key={`created-${item.syncShiftKey ?? "unknown"}-${index}`}
+                    >
+                      - {formatShiftLine(item)}
+                    </p>
+                  ))
+                )}
+              </div>
+            </details>
+
+            <details className="rounded border border-blue-200 bg-blue-50 px-3 py-2">
+              <summary className="cursor-pointer text-sm font-medium text-blue-900">
+                🔄 Atualizados: {summary.update} evento
+                {summary.update === 1 ? "" : "s"}
+              </summary>
+              <div className="mt-2 space-y-1 text-xs text-blue-800">
+                {updatedChanges.length === 0 ? (
+                  <p>Sem turnos atualizados.</p>
+                ) : (
+                  updatedChanges.map((item, index) => (
+                    <p
+                      key={`updated-${item.syncShiftKey ?? "unknown"}-${index}`}
+                    >
+                      - {formatShiftLine(item)}
+                    </p>
+                  ))
+                )}
+              </div>
+            </details>
+
+            <details className="rounded border border-red-200 bg-red-50 px-3 py-2">
+              <summary className="cursor-pointer text-sm font-medium text-red-900">
+                ❌ Eliminados: {summary.delete} evento
+                {summary.delete === 1 ? "" : "s"}
+              </summary>
+              <div className="mt-2 space-y-1 text-xs text-red-800">
+                {deletedChanges.length === 0 ? (
+                  <p>Sem turnos eliminados.</p>
+                ) : (
+                  deletedChanges.map((item, index) => (
+                    <p
+                      key={`deleted-${item.syncShiftKey ?? "unknown"}-${index}`}
+                    >
+                      - {formatShiftLine(item)}
+                    </p>
+                  ))
+                )}
+              </div>
+            </details>
           </div>
 
           {/* Action Buttons */}

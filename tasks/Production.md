@@ -35,3 +35,8 @@
 ## Note
 
 Do not route unreleased features into production navigation by default.
+
+
+## Final tasks
+- Fix parser  as it does not give user a warming when their schedule breaks the 6/60 rule.
+    * Parser gives more turnos then it will actually change - FIX

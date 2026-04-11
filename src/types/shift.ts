@@ -1,5 +1,6 @@
 export interface ShiftData {
   id: string;
+  shiftUid?: string;
   week: number;
   date: Date;
   startTime: string;

@@ -22,6 +22,7 @@ export interface UserProfile {
 export interface Shift {
   id: string;
   userId: string;
+  shiftUid?: string | null;
   /** ISO date string, e.g. "2025-04-09" */
   date: string;
   /** ISO datetime string */
@@ -32,6 +33,9 @@ export interface Shift {
   location: string | null;
   googleEventId: string | null;
   sourceUploadId: string | null;
+  uploadBatchId?: string | null;
+  status?: "active" | "deleted" | null;
+  lastSeenAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }

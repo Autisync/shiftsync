@@ -178,6 +178,7 @@ begin
 end;
 $$ language plpgsql;
 
+drop trigger if exists trigger_update_upload_metadata on public.schedule_uploads;
 create trigger trigger_update_upload_metadata
 before insert on public.schedule_uploads
 for each row

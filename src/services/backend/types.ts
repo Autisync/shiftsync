@@ -18,6 +18,7 @@ import type {
   ScheduleAccessRequest,
   AccessRequestStatus,
 } from "@/types/domain";
+import type { ShiftData } from "@/types/shift";
 
 // ── AuthService ────────────────────────────────────────────────────────────
 
@@ -119,12 +120,69 @@ export interface LeaveService {
 
 // ── CalendarSyncService ────────────────────────────────────────────────────
 
+export interface CalendarSyncRunOptions {
+  userId: string;
+  accessToken: string;
+  calendarId: string;
+  dateRange?: {
+    start: string;
+    end: string;
+  };
+  fullResync?: boolean;
+  removeStaleEvents?: boolean;
+}
+
+export interface CalendarPreviewSyncResult {
+  summary: {
+    created: number;
+    updated: number;
+    deleted: number;
+    noop: number;
+    failed: number;
+  };
+  changes?: Array<{
+    type: "create" | "update" | "delete" | "noop";
+    reason: string;
+    syncShiftKey: string | null;
+    date: string | null;
+    start: string | null;
+    end: string | null;
+    title: string | null;
+    location: string | null;
+  }>;
+  syncedShifts: ShiftData[];
+  errors: Array<{ shiftId: string | null; message: string }>;
+}
+
+export interface CalendarPreviewOptions {
+  userId: string;
+  accessToken: string;
+  calendarId: string;
+  dateRange?: {
+    start: string;
+    end: string;
+  };
+  fullResync?: boolean;
+  removeStaleEvents?: boolean;
+}
+
 export interface CalendarSyncService {
   syncShifts(
     shifts: Shift[],
     accessToken: string,
     calendarId: string,
   ): Promise<{ created: number; updated: number; deleted: number }>;
+  runSync(
+    shifts: ShiftData[],
+    options: CalendarSyncRunOptions,
+  ): Promise<CalendarPreviewSyncResult>;
+  previewSync(
+    shifts: ShiftData[],
+    options: CalendarPreviewOptions,
+  ): Promise<{
+    summary: CalendarPreviewSyncResult["summary"];
+    changes: NonNullable<CalendarPreviewSyncResult["changes"]>;
+  }>;
 }
 
 // ── NotificationService ────────────────────────────────────────────────────

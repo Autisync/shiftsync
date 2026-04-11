@@ -9,6 +9,50 @@
 
 A secure, GDPR-compliant web application for syncing Excel shift schedules to Google Calendar.
 
+## Phase 3 Calendar Sync Engine
+
+ShiftSync now runs calendar synchronization through a dedicated Phase 3 sync engine with deterministic diffing.
+
+### How Sync Works
+
+1. Parse/upload creates active shift data.
+2. ShiftSync computes a stable shift identity (`shift_uid`) and event fingerprint.
+3. Sync compares current active shifts against tracked sync records.
+4. Diff actions are generated:
+  - `create`: local shift exists but no tracked calendar event
+  - `update`: tracked event exists and fingerprint changed
+  - `delete`: tracked event exists but shift no longer active/in scope
+  - `noop`: fingerprint unchanged
+5. Actions are applied to Google Calendar through an adapter layer.
+
+### Update Detection
+
+Updates are triggered when fingerprint fields change, including:
+
+- date
+- start/end time
+- title
+- description/notes
+- location
+
+If a shift key drifts between imports, fallback reconciliation matches by day/title and nearest start-time to avoid duplicate creates.
+
+### Delete Detection
+
+A tracked event is deleted when it is stale relative to the current active schedule set in the selected sync window (or in full resync mode).
+
+### Full Resync
+
+Full resync recalculates all actions for the selected range and can:
+
+- create missing tracked events
+- update changed tracked events
+- delete stale tracked events
+
+### Safety Rule
+
+Only ShiftSync-tracked events are deleted. Untracked calendar events are never removed.
+
 ## Setup
 
 ### 1. Google OAuth Configuration

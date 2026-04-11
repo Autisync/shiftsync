@@ -74,6 +74,8 @@ const httpLeave: LeaveService = {
 
 const httpCalendar: CalendarSyncService = {
   syncShifts: () => notImplemented("calendar.syncShifts"),
+  runSync: () => notImplemented("calendar.runSync"),
+  previewSync: () => notImplemented("calendar.previewSync"),
 };
 
 const httpNotifications: NotificationService = {
