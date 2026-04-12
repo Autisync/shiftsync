@@ -17,6 +17,7 @@ import type {
   ScheduleUpload,
   ScheduleAccessRequest,
   AccessRequestStatus,
+  HRSettings,
 } from "@/types/domain";
 import type { ShiftData } from "@/types/shift";
 
@@ -106,7 +107,24 @@ export interface SwapService {
     id: string,
     status: SwapRequestStatus,
     actorUserId?: string,
+    violations?: { code: string; reason: string },
   ): Promise<SwapRequest>;
+  acceptSwapRequest(
+    requestId: string,
+    targetUserId: string,
+    validationResult: {
+      valid: boolean;
+      violations: Array<{ code: string; message: string }>;
+    },
+  ): Promise<SwapRequest>;
+  markHREmailSent(requestId: string): Promise<SwapRequest>;
+  applySwap(requestId: string): Promise<SwapRequest>;
+  getHRSettings(userId: string): Promise<HRSettings | null>;
+  saveHRSettings(input: {
+    userId: string;
+    hrEmail: string;
+    ccEmails: string[];
+  }): Promise<HRSettings>;
 }
 
 // ── LeaveService ───────────────────────────────────────────────────────────

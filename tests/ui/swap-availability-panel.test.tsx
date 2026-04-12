@@ -99,6 +99,11 @@ describe("SwapAvailabilityPanel", () => {
         closeAvailability: vi.fn(),
         createSwapRequest: vi.fn(),
         updateSwapStatus: vi.fn(),
+        acceptSwapRequest: vi.fn(),
+        markHREmailSent: vi.fn(),
+        applySwap: vi.fn(),
+        getHRSettings: vi.fn().mockResolvedValue(null),
+        saveHRSettings: vi.fn(),
       },
     };
 
@@ -140,6 +145,11 @@ describe("SwapAvailabilityPanel", () => {
         closeAvailability: vi.fn(),
         createSwapRequest: vi.fn(),
         updateSwapStatus: vi.fn(),
+        acceptSwapRequest: vi.fn(),
+        markHREmailSent: vi.fn(),
+        applySwap: vi.fn(),
+        getHRSettings: vi.fn().mockResolvedValue(null),
+        saveHRSettings: vi.fn(),
       },
     };
 
@@ -155,7 +165,7 @@ describe("SwapAvailabilityPanel", () => {
   });
 
   it("shows target inbox actions and updates status", async () => {
-    const updateSwapStatus = vi.fn().mockResolvedValue(
+    const acceptSwapRequest = vi.fn().mockResolvedValue(
       makeRequest({
         id: "r-2",
         requesterUserId: "u-other",
@@ -165,6 +175,16 @@ describe("SwapAvailabilityPanel", () => {
     );
 
     const backend = {
+      users: {
+        getUserProfile: vi.fn().mockResolvedValue({
+          id: "u-own",
+          employeeCode: "E001",
+          fullName: "User Own",
+          email: "own@example.com",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }),
+      },
       shifts: {
         getShiftsForUser: vi.fn().mockResolvedValue([
           makeShift({
@@ -175,6 +195,15 @@ describe("SwapAvailabilityPanel", () => {
             end: "18:00",
           }),
         ]),
+        getShiftById: vi.fn().mockResolvedValue(
+          makeShift({
+            id: "s-1",
+            userId: "u-own",
+            date: "2026-04-20",
+            start: "09:00",
+            end: "18:00",
+          }),
+        ),
       },
       swaps: {
         getOpenAvailabilities: vi.fn().mockResolvedValue([]),
@@ -191,7 +220,12 @@ describe("SwapAvailabilityPanel", () => {
         openAvailability: vi.fn(),
         closeAvailability: vi.fn(),
         createSwapRequest: vi.fn(),
-        updateSwapStatus,
+        updateSwapStatus: vi.fn(),
+        acceptSwapRequest,
+        markHREmailSent: vi.fn(),
+        applySwap: vi.fn(),
+        getHRSettings: vi.fn().mockResolvedValue(null),
+        saveHRSettings: vi.fn(),
       },
     };
 
@@ -207,7 +241,11 @@ describe("SwapAvailabilityPanel", () => {
     fireEvent.click(acceptButton);
 
     await waitFor(() => {
-      expect(updateSwapStatus).toHaveBeenCalledWith("r-2", "accepted", "u-own");
+      expect(acceptSwapRequest).toHaveBeenCalledWith(
+        "r-2",
+        "u-own",
+        expect.objectContaining({ valid: expect.any(Boolean) }),
+      );
     });
   });
 
@@ -244,6 +282,11 @@ describe("SwapAvailabilityPanel", () => {
         closeAvailability: vi.fn(),
         createSwapRequest: vi.fn(),
         updateSwapStatus: vi.fn(),
+        acceptSwapRequest: vi.fn(),
+        markHREmailSent: vi.fn(),
+        applySwap: vi.fn(),
+        getHRSettings: vi.fn().mockResolvedValue(null),
+        saveHRSettings: vi.fn(),
       },
     };
 

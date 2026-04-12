@@ -82,6 +82,21 @@ export interface SwapRequest {
   rejectedAt: string | null;
   submittedToHrAt: string | null;
   approvedAt: string | null;
+  ruleViolation: string | null;
+  violationReason: string | null;
+  hrEmailSent: boolean;
+  calendarApplied: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── HR Settings ────────────────────────────────────────────────────────────
+
+export interface HRSettings {
+  id: string;
+  userId: string;
+  hrEmail: string;
+  ccEmails: string[];
   createdAt: string;
   updatedAt: string;
 }

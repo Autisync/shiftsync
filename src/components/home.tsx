@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useGoogleLogin } from "@react-oauth/google";
 import { AuthCard } from "@/components/auth/auth-card";
 import { FirstLoginProfileDialog } from "@/components/auth/FirstLoginProfileDialog";
@@ -33,6 +33,7 @@ import {
   isSwapsEnabled,
 } from "@/shared/utils/featureFlags";
 import { SwapAvailabilityPanel } from "@/components/swaps/swap-availability-panel";
+import { SwapsCalendarScreen } from "@/components/swaps/swaps-calendar-screen";
 
 import { useConsent } from "@/lib/cookies/ConsentContext";
 import { SpeedInsights } from "@vercel/speed-insights/react";
@@ -128,8 +129,10 @@ function mustShowProfileDialog(
 function Home() {
   const { hasCategory } = useConsent();
   const navigate = useNavigate();
+  const location = useLocation();
   const backend = getBackend();
   const swapsEnabled = isSwapsEnabled();
+  const isSwapsRoute = location.pathname.endsWith("/swaps");
   // Authentication state
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string>("");
@@ -700,9 +703,12 @@ function Home() {
           email={userEmail}
           onLogout={handleLogout}
           onOpenSettings={handleOpenSettings}
+          onOpenSwaps={() => navigate("/home/swaps")}
+          onOpenDashboard={() => navigate("/home")}
+          swapsActive={isSwapsRoute}
         />
 
-        {currentUserId && (
+        {!isSwapsRoute && currentUserId && (
           <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -717,12 +723,13 @@ function Home() {
               </div>
 
               {swapsEnabled ? (
-                <a
-                  href="#swaps-panel"
+                <button
+                  type="button"
+                  onClick={() => navigate("/home/swaps")}
                   className="inline-flex items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
                 >
-                  Ir para Trocas
-                </a>
+                  Open Swap Calendar
+                </button>
               ) : (
                 <span className="inline-flex items-center rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
                   Funcionalidade desativada
@@ -732,49 +739,48 @@ function Home() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-          <div className="lg:col-span-1 space-y-4 sm:space-y-6">
-            <CalendarSelector
-              accessToken={accessToken || ""}
-              selectedCalendar={selectedCalendar}
-              onSelectCalendar={(id, name) => {
-                setSelectedCalendar(id);
-                setCalendarName(name || "O Meu Calendário");
-              }}
-              onTokenExpired={handleTokenExpired}
-            />
+        {isSwapsRoute && currentUserId ? (
+          <SwapsCalendarScreen userId={currentUserId} enabled={swapsEnabled} />
+        ) : null}
 
-            {(currentStep === "upload" || currentStep === "preview") && (
-              <FileUploadZone
-                onFileProcessed={handleFileProcessed}
-                disabled={false}
+        {!isSwapsRoute ? (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+            <div className="lg:col-span-1 space-y-4 sm:space-y-6">
+              <CalendarSelector
+                accessToken={accessToken || ""}
+                selectedCalendar={selectedCalendar}
+                onSelectCalendar={(id, name) => {
+                  setSelectedCalendar(id);
+                  setCalendarName(name || "O Meu Calendário");
+                }}
+                onTokenExpired={handleTokenExpired}
               />
-            )}
 
-            {isSharedRecoveryEnabled() && currentUserId && (
-              <SharedScheduleRecoveryCard userId={currentUserId} />
-            )}
-          </div>
-
-          <div className="lg:col-span-2">
-            {currentStep === "preview" && shifts.length > 0 && (
-              <ShiftPreviewTable
-                shifts={shifts}
-                onConfirm={handlePreviewConfirm}
-                employeeName={selectedEmployeeName}
-              />
-            )}
-
-            {currentUserId && (
-              <div id="swaps-panel">
-                <SwapAvailabilityPanel
-                  userId={currentUserId}
-                  enabled={swapsEnabled}
+              {(currentStep === "upload" || currentStep === "preview") && (
+                <FileUploadZone
+                  onFileProcessed={handleFileProcessed}
+                  disabled={false}
                 />
-              </div>
-            )}
+              )}
+
+              {isSharedRecoveryEnabled() && currentUserId && (
+                <SharedScheduleRecoveryCard userId={currentUserId} />
+              )}
+            </div>
+
+            <div className="lg:col-span-2">
+              {currentStep === "preview" && shifts.length > 0 && (
+                <ShiftPreviewTable
+                  shifts={shifts}
+                  onConfirm={handlePreviewConfirm}
+                  employeeName={selectedEmployeeName}
+                />
+              )}
+
+              {currentUserId && <div id="swaps-panel" />}
+            </div>
           </div>
-        </div>
+        ) : null}
 
         {/* Modals */}
         <SyncConfirmationModal

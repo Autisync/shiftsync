@@ -30,6 +30,7 @@ import type {
   LeaveRequestStatus,
   ScheduleUpload,
   ScheduleAccessRequest,
+  HRSettings,
 } from "@/types/domain";
 import { toUserProfile } from "@/shared/mappers/user.mapper";
 import { toShift } from "@/shared/mappers/shift.mapper";
@@ -37,6 +38,7 @@ import {
   toSwapAvailability,
   toSwapRequest,
 } from "@/shared/mappers/swap.mapper";
+import { toHRSettings } from "@/shared/mappers/hr-settings.mapper";
 import { assertSwapStatusTransition } from "@/features/swaps/services/swap-workflow";
 import { toLeaveRequest } from "@/shared/mappers/leave.mapper";
 import {
@@ -868,6 +870,7 @@ const supabaseSwaps: SwapService = {
     id: string,
     status: SwapRequestStatus,
     actorUserId?: string,
+    violations?: { code: string; reason: string },
   ): Promise<SwapRequest> {
     const supabase = getSupabaseClient();
     if (!supabase) throw new Error("Supabase client unavailable");
@@ -896,6 +899,8 @@ const supabaseSwaps: SwapService = {
       rejected_at?: string | null;
       submitted_to_hr_at?: string | null;
       approved_at?: string | null;
+      rule_violation?: string | null;
+      violation_reason?: string | null;
     } = {
       status,
       status_history: [
@@ -907,6 +912,11 @@ const supabaseSwaps: SwapService = {
         },
       ],
     };
+
+    if (violations) {
+      patch.rule_violation = violations.code;
+      patch.violation_reason = violations.reason;
+    }
 
     if (status === "accepted") {
       patch.accepted_at = now;
@@ -928,6 +938,197 @@ const supabaseSwaps: SwapService = {
       .select()
       .single();
     return toSwapRequest(assertNoError({ data, error }));
+  },
+
+  async acceptSwapRequest(
+    requestId: string,
+    targetUserId: string,
+    validationResult: {
+      valid: boolean;
+      violations: Array<{ code: string; message: string }>;
+    },
+  ): Promise<SwapRequest> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const now = new Date().toISOString();
+
+    // If validation failed, create update with violations but don't change status
+    if (!validationResult.valid) {
+      const violation = validationResult.violations[0];
+      const { data, error } = await supabase
+        .from("swap_requests")
+        .update({
+          rule_violation: violation.code,
+          violation_reason: violation.message,
+        })
+        .eq("id", requestId)
+        .select()
+        .single();
+      return toSwapRequest(assertNoError({ data, error }));
+    }
+
+    // Valid: move to accepted
+    const { data: existingData, error: existingError } = await supabase
+      .from("swap_requests")
+      .select("*")
+      .eq("id", requestId)
+      .single();
+    const existing = assertNoError({
+      data: existingData,
+      error: existingError,
+    });
+
+    const currentHistory = Array.isArray(existing.status_history)
+      ? existing.status_history
+      : [];
+
+    const { data, error } = await supabase
+      .from("swap_requests")
+      .update({
+        status: "accepted",
+        accepted_at: now,
+        status_history: [
+          ...currentHistory,
+          {
+            status: "accepted",
+            changed_at: now,
+            changed_by_user_id: targetUserId,
+          },
+        ],
+      })
+      .eq("id", requestId)
+      .select()
+      .single();
+    return toSwapRequest(assertNoError({ data, error }));
+  },
+
+  async markHREmailSent(requestId: string): Promise<SwapRequest> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data: existingData, error: existingError } = await supabase
+      .from("swap_requests")
+      .select("*")
+      .eq("id", requestId)
+      .single();
+    const existing = assertNoError({
+      data: existingData,
+      error: existingError,
+    });
+
+    const now = new Date().toISOString();
+    const currentHistory = Array.isArray(existing.status_history)
+      ? existing.status_history
+      : [];
+
+    const patch: {
+      hr_email_sent: boolean;
+      status?: SwapRequestStatus;
+      submitted_to_hr_at?: string;
+      status_history?: unknown[];
+    } = {
+      hr_email_sent: true,
+    };
+
+    if (existing.status !== "submitted_to_hr") {
+      patch.status = "submitted_to_hr";
+      patch.submitted_to_hr_at = now;
+      patch.status_history = [
+        ...currentHistory,
+        {
+          status: "submitted_to_hr",
+          changed_at: now,
+          changed_by_user_id: null,
+        },
+      ];
+    }
+
+    if (!existing.submitted_to_hr_at) {
+      patch.submitted_to_hr_at = now;
+    }
+
+    const { data, error } = await supabase
+      .from("swap_requests")
+      .update(patch)
+      .eq("id", requestId)
+      .select()
+      .single();
+    return toSwapRequest(assertNoError({ data, error }));
+  },
+
+  async applySwap(requestId: string): Promise<SwapRequest> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { error: rpcError } = await supabase.rpc("apply_swap_request", {
+      p_request_id: requestId,
+    });
+
+    if (rpcError) {
+      const maybeCode =
+        typeof rpcError === "object" && rpcError && "code" in rpcError
+          ? String((rpcError as { code?: string }).code)
+          : null;
+      if (maybeCode === "PGRST202") {
+        throw new Error(
+          "Atualizacao de calendario indisponivel: execute as migracoes mais recentes.",
+        );
+      }
+      throw new Error(getErrorMessage(rpcError));
+    }
+
+    const { data, error } = await supabase
+      .from("swap_requests")
+      .select("*")
+      .eq("id", requestId)
+      .single();
+
+    return toSwapRequest(assertNoError({ data, error }));
+  },
+
+  async getHRSettings(userId: string): Promise<HRSettings | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+
+    const { data, error } = await supabase
+      .from("hr_settings")
+      .select("*")
+      .eq("user_id", userId)
+      .single();
+
+    if (error?.code === "PGRST116") {
+      // Not found
+      return null;
+    }
+    if (error) throw error;
+    if (!data) return null;
+
+    return toHRSettings(data);
+  },
+
+  async saveHRSettings(input: {
+    userId: string;
+    hrEmail: string;
+    ccEmails: string[];
+  }): Promise<HRSettings> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data, error } = await supabase
+      .from("hr_settings")
+      .upsert(
+        {
+          user_id: input.userId,
+          hr_email: input.hrEmail,
+          cc_emails: input.ccEmails,
+        },
+        { onConflict: "user_id" },
+      )
+      .select()
+      .single();
+
+    return toHRSettings(assertNoError({ data, error }));
   },
 };
 

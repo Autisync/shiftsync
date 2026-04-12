@@ -1,0 +1,199 @@
+.swap-enterprise-calendar {
+  --calendar-border: #e2e8f0;
+  --calendar-muted: #64748b;
+  --calendar-text: #0f172a;
+  --calendar-hover: #e7effe;
+  --calendar-today: #f8fbff;
+  --calendar-primary: #2563eb;
+  --calendar-primary-soft: #dbeafe;
+  --calendar-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  font-family: "Google Sans", "DM Sans", "Segoe UI", sans-serif;
+}
+
+.swap-enterprise-calendar .rbc-calendar {
+  color: var(--calendar-text);
+  font-size: 13px;
+  height: 100%;
+}
+
+.swap-enterprise-calendar .rbc-toolbar {
+  margin-bottom: 12px;
+  gap: 10px;
+  align-items: center;
+}
+
+.swap-enterprise-calendar .rbc-toolbar .rbc-toolbar-label {
+  font-size: 18px;
+  font-weight: 600;
+  color: #0b1324;
+  letter-spacing: -0.01em;
+}
+
+.swap-enterprise-calendar .rbc-btn-group {
+  display: inline-flex;
+  gap: 6px;
+  border: 1px solid var(--calendar-border);
+  border-radius: 999px;
+  padding: 2px;
+  box-shadow: var(--calendar-shadow);
+  background: #fff;
+}
+
+.swap-enterprise-calendar .rbc-btn-group button {
+  border: none;
+  border-radius: 999px;
+  height: 30px;
+  min-width: 36px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--calendar-muted);
+  background: transparent;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.swap-enterprise-calendar .rbc-btn-group button:hover {
+  background: var(--calendar-hover);
+  color: #1d4ed8;
+}
+
+.swap-enterprise-calendar .rbc-btn-group button:active {
+  transform: translateY(1px);
+}
+
+.swap-enterprise-calendar .rbc-btn-group button.rbc-active {
+  background: var(--calendar-primary-soft);
+  color: #1e40af;
+}
+
+.swap-enterprise-calendar .rbc-month-view,
+.swap-enterprise-calendar .rbc-time-view,
+.swap-enterprise-calendar .rbc-agenda-view {
+  border: 1px solid var(--calendar-border);
+  border-radius: 16px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.swap-enterprise-calendar .rbc-header {
+  border-bottom: 1px solid var(--calendar-border);
+  border-left: 1px solid var(--calendar-border);
+  padding: 10px 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-weight: 600;
+  font-size: 10px;
+  color: #64748b;
+  background: #f8fafc;
+}
+
+.swap-enterprise-calendar .rbc-header:first-child {
+  border-left: none;
+}
+
+.swap-enterprise-calendar .rbc-day-bg {
+  transition: background-color 140ms ease;
+}
+
+.swap-enterprise-calendar .rbc-off-range-bg {
+  background: #f8fafc;
+}
+
+.swap-enterprise-calendar .rbc-today {
+  background: var(--calendar-today);
+}
+
+.swap-enterprise-calendar .rbc-day-bg:hover {
+  background: #f8fbff;
+}
+
+.swap-enterprise-calendar .rbc-date-cell {
+  padding: 6px 8px 0;
+  text-align: left;
+}
+
+.swap-enterprise-calendar .rbc-date-cell > a {
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.swap-enterprise-calendar .rbc-now .rbc-button-link {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--calendar-primary);
+  color: #fff;
+  font-weight: 700;
+}
+
+.swap-enterprise-calendar .rbc-month-row,
+.swap-enterprise-calendar .rbc-time-content,
+.swap-enterprise-calendar .rbc-time-header-content,
+.swap-enterprise-calendar .rbc-timeslot-group,
+.swap-enterprise-calendar .rbc-day-slot .rbc-time-slot,
+.swap-enterprise-calendar .rbc-time-header,
+.swap-enterprise-calendar .rbc-time-view {
+  border-color: var(--calendar-border);
+}
+
+.swap-enterprise-calendar .rbc-event,
+.swap-enterprise-calendar .rbc-background-event {
+  box-shadow: none;
+  padding: 0;
+  min-height: 36px;
+}
+
+.swap-enterprise-calendar .rbc-row-segment {
+  padding: 1px 3px;
+}
+
+.swap-enterprise-calendar .rbc-show-more {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 600;
+  background: transparent;
+}
+
+.swap-enterprise-calendar .rbc-event-label,
+.swap-enterprise-calendar .rbc-event-content {
+  line-height: 1.25;
+}
+
+.swap-enterprise-calendar .rbc-current-time-indicator {
+  background: #ef4444;
+  height: 2px;
+}
+
+.swap-enterprise-calendar .rbc-time-slot .rbc-label,
+.swap-enterprise-calendar .rbc-time-gutter .rbc-timeslot-group {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+@media (max-width: 768px) {
+  .swap-enterprise-calendar {
+    height: 560px;
+  }
+
+  .swap-enterprise-calendar .rbc-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .swap-enterprise-calendar .rbc-toolbar-label {
+    text-align: center;
+  }
+
+  .swap-enterprise-calendar .rbc-btn-group {
+    justify-content: center;
+    width: 100%;
+    overflow-x: auto;
+  }
+}
