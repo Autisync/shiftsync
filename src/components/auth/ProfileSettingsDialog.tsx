@@ -166,11 +166,15 @@ export function ProfileSettingsDialog({
             <Select
               value={defaultCalendarId ?? undefined}
               onValueChange={(id) => {
-                const selected = calendars.find((calendar) => calendar.id === id);
+                const selected = calendars.find(
+                  (calendar) => calendar.id === id,
+                );
                 setDefaultCalendarId(id);
                 setDefaultCalendarName(selected?.summary ?? null);
               }}
-              disabled={!accessToken || calendarLoading || calendars.length === 0}
+              disabled={
+                !accessToken || calendarLoading || calendars.length === 0
+              }
             >
               <SelectTrigger className="w-full">
                 <SelectValue

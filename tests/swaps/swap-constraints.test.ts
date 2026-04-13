@@ -52,9 +52,7 @@ describe("validateScheduleConstraints", () => {
 
     expect(result.valid).toBe(false);
     expect(
-      result.violations.some(
-        (v) => v.code === "MAX_CONSECUTIVE_DAYS_EXCEEDED",
-      ),
+      result.violations.some((v) => v.code === "MAX_CONSECUTIVE_DAYS_EXCEEDED"),
     ).toBe(true);
   });
 
@@ -78,7 +76,13 @@ describe("validateScheduleConstraints", () => {
       minRestHours: 11,
     });
 
-    expect(withoutRestRule.violations.some((v) => v.code === "MIN_REST_HOURS_VIOLATED")).toBe(false);
-    expect(withRestRule.violations.some((v) => v.code === "MIN_REST_HOURS_VIOLATED")).toBe(true);
+    expect(
+      withoutRestRule.violations.some(
+        (v) => v.code === "MIN_REST_HOURS_VIOLATED",
+      ),
+    ).toBe(false);
+    expect(
+      withRestRule.violations.some((v) => v.code === "MIN_REST_HOURS_VIOLATED"),
+    ).toBe(true);
   });
 });

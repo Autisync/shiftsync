@@ -220,7 +220,9 @@ export function SyncConfirmationModal({
     }
 
     const today = new Date();
-    const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+    const start = new Date(
+      Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()),
+    );
     const end = new Date(start);
 
     if (preset === "this-week") {
@@ -263,7 +265,9 @@ export function SyncConfirmationModal({
 
   const selectedCalendar = calendars.find((c) => c.id === selectedCalendarId);
   const canSync = selectedCalendarId && !calendarsLoading && !loading;
-  const visibleChanges = changes.filter((item) => item.type !== "noop").slice(0, 12);
+  const visibleChanges = changes
+    .filter((item) => item.type !== "noop")
+    .slice(0, 12);
 
   return (
     <>
@@ -337,7 +341,11 @@ export function SyncConfirmationModal({
                           {calendar.backgroundColor && (
                             <div
                               className="w-3 h-3 rounded-full flex-shrink-0 calendar-color-swatch"
-                              {...({ style: { "--swatch-color": calendar.backgroundColor } } as React.HTMLAttributes<HTMLDivElement>)}
+                              {...({
+                                style: {
+                                  "--swatch-color": calendar.backgroundColor,
+                                },
+                              } as React.HTMLAttributes<HTMLDivElement>)}
                             />
                           )}
                           <span className="truncate text-xs sm:text-sm">
@@ -373,7 +381,11 @@ export function SyncConfirmationModal({
                     {selectedCalendar.backgroundColor && (
                       <div
                         className="w-6 h-6 sm:w-8 sm:h-8 rounded-lg shadow-sm flex-shrink-0 calendar-color-swatch"
-                        {...({ style: { "--swatch-color": selectedCalendar.backgroundColor } } as React.HTMLAttributes<HTMLDivElement>)}
+                        {...({
+                          style: {
+                            "--swatch-color": selectedCalendar.backgroundColor,
+                          },
+                        } as React.HTMLAttributes<HTMLDivElement>)}
                       />
                     )}
                     <div className="min-w-0 flex-1">
@@ -413,7 +425,11 @@ export function SyncConfirmationModal({
                     value={rangePreset}
                     onValueChange={(value) =>
                       setRangePreset(
-                        value as "auto" | "this-week" | "next-week" | "this-month",
+                        value as
+                          | "auto"
+                          | "this-week"
+                          | "next-week"
+                          | "this-month",
                       )
                     }
                   >
@@ -421,7 +437,9 @@ export function SyncConfirmationModal({
                       <SelectValue placeholder="Escolher janela" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="auto">Auto (período importado)</SelectItem>
+                      <SelectItem value="auto">
+                        Auto (período importado)
+                      </SelectItem>
                       <SelectItem value="this-week">Esta semana</SelectItem>
                       <SelectItem value="next-week">Próxima semana</SelectItem>
                       <SelectItem value="this-month">Este mês</SelectItem>
@@ -437,7 +455,9 @@ export function SyncConfirmationModal({
                     disabled={!selectedCalendarId || previewLoading}
                     onClick={handleRefreshPreview}
                   >
-                    {previewLoading ? "A calcular..." : "Atualizar Pré-visualização"}
+                    {previewLoading
+                      ? "A calcular..."
+                      : "Atualizar Pré-visualização"}
                   </Button>
                 </div>
               </div>
@@ -455,9 +475,12 @@ export function SyncConfirmationModal({
                 <input
                   type="checkbox"
                   checked={removeStaleEvents}
-                  onChange={(event) => setRemoveStaleEvents(event.target.checked)}
+                  onChange={(event) =>
+                    setRemoveStaleEvents(event.target.checked)
+                  }
                 />
-                Remover eventos ShiftSync antigos que já não existem neste horário
+                Remover eventos ShiftSync antigos que já não existem neste
+                horário
               </label>
             </div>
 
@@ -538,15 +561,19 @@ export function SyncConfirmationModal({
                 <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
                 <AlertDescription className="text-xs sm:text-sm text-amber-900 space-y-2">
                   <p className="font-semibold">
-                    Regras 6/60: foram detetadas possiveis violacoes neste horario.
+                    Regras 6/60: foram detetadas possiveis violacoes neste
+                    horario.
                   </p>
                   <ul className="list-disc pl-5 space-y-1">
                     {constraintWarnings.map((violation, index) => (
-                      <li key={`${violation.code}-${index}`}>{violation.message}</li>
+                      <li key={`${violation.code}-${index}`}>
+                        {violation.message}
+                      </li>
                     ))}
                   </ul>
                   <p>
-                    Pode continuar a sincronizacao, mas recomenda-se confirmar estes turnos antes de aplicar alteracoes.
+                    Pode continuar a sincronizacao, mas recomenda-se confirmar
+                    estes turnos antes de aplicar alteracoes.
                   </p>
                 </AlertDescription>
               </Alert>
@@ -575,12 +602,18 @@ export function SyncConfirmationModal({
                   Pré-visualização de alterações
                 </span>
                 <span className="text-xs text-slate-500">
-                  {visibleChanges.length}/{Math.max(changes.filter((item) => item.type !== "noop").length, 0)}
+                  {visibleChanges.length}/
+                  {Math.max(
+                    changes.filter((item) => item.type !== "noop").length,
+                    0,
+                  )}
                 </span>
               </div>
 
               {visibleChanges.length === 0 ? (
-                <p className="text-xs text-slate-500">Sem alterações materiais para aplicar.</p>
+                <p className="text-xs text-slate-500">
+                  Sem alterações materiais para aplicar.
+                </p>
               ) : (
                 <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
                   {visibleChanges.map((item, index) => {
@@ -597,7 +630,9 @@ export function SyncConfirmationModal({
                         className="rounded-md border border-slate-200 px-2 py-2"
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className={`text-[10px] uppercase tracking-wide font-semibold px-2 py-0.5 rounded ${badgeClass}`}>
+                          <span
+                            className={`text-[10px] uppercase tracking-wide font-semibold px-2 py-0.5 rounded ${badgeClass}`}
+                          >
                             {item.type}
                           </span>
                           <span className="text-[11px] text-slate-500 truncate">
@@ -612,7 +647,11 @@ export function SyncConfirmationModal({
                           {item.location ?? "Sem localização"}
                         </p>
                         <p className="text-[11px] text-slate-500 truncate">
-                          {item.start ? new Date(item.start).toLocaleString() : "-"} - {item.end ? new Date(item.end).toLocaleString() : "-"}
+                          {item.start
+                            ? new Date(item.start).toLocaleString()
+                            : "-"}{" "}
+                          -{" "}
+                          {item.end ? new Date(item.end).toLocaleString() : "-"}
                         </p>
                         <p className="text-[11px] text-slate-500 mt-0.5 truncate">
                           {item.reason}

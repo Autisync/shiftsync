@@ -210,7 +210,8 @@ function Home() {
 
   const loadDefaultCalendarPreference = async (userId: string) => {
     try {
-      const preference = await backend.users.getDefaultCalendarPreference(userId);
+      const preference =
+        await backend.users.getDefaultCalendarPreference(userId);
       if (!preference?.calendarId) return;
 
       setSelectedCalendar(preference.calendarId);
@@ -231,7 +232,9 @@ function Home() {
   };
 
   useEffect(() => {
-    const savedCalendarId = localStorage.getItem(STORAGE_KEYS.DEFAULT_CALENDAR_ID);
+    const savedCalendarId = localStorage.getItem(
+      STORAGE_KEYS.DEFAULT_CALENDAR_ID,
+    );
     const savedCalendarName = localStorage.getItem(
       STORAGE_KEYS.DEFAULT_CALENDAR_NAME,
     );
@@ -278,7 +281,9 @@ function Home() {
   const [calendarSyncCompatMode, setCalendarSyncCompatMode] = useState(false);
   const [uploadPersistenceOk, setUploadPersistenceOk] = useState(true);
   const syncConstraintWarnings = useMemo(
-    () => validateScheduleConstraints(buildConstraintInputFromShifts(shifts)).violations,
+    () =>
+      validateScheduleConstraints(buildConstraintInputFromShifts(shifts))
+        .violations,
     [shifts],
   );
 

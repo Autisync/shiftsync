@@ -111,7 +111,8 @@ function getMaxConsecutiveWorkedDays(shifts: ConstraintShift[]): number {
   let currentConsecutive = 1;
 
   for (let i = 1; i < uniqueDates.length; i++) {
-    const diffDays = (uniqueDates[i] - uniqueDates[i - 1]) / (1000 * 60 * 60 * 24);
+    const diffDays =
+      (uniqueDates[i] - uniqueDates[i - 1]) / (1000 * 60 * 60 * 24);
     if (diffDays === 1) {
       currentConsecutive += 1;
       maxConsecutive = Math.max(maxConsecutive, currentConsecutive);
@@ -131,7 +132,10 @@ function getWeekStart(dateIso: string): string {
   return weekStart.toISOString().slice(0, 10);
 }
 
-function getHoursForWeek(shifts: ConstraintShift[], weekStartIso: string): number {
+function getHoursForWeek(
+  shifts: ConstraintShift[],
+  weekStartIso: string,
+): number {
   const weekStart = new Date(`${weekStartIso}T00:00:00.000Z`);
   const weekEnd = new Date(weekStart);
   weekEnd.setUTCDate(weekStart.getUTCDate() + 7);
@@ -162,7 +166,11 @@ function findRestViolations(
   const sorted = [...shifts].sort(
     (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
   );
-  const issues: Array<{ previousEndsAt: string; nextStartsAt: string; restHours: number }> = [];
+  const issues: Array<{
+    previousEndsAt: string;
+    nextStartsAt: string;
+    restHours: number;
+  }> = [];
 
   for (let i = 1; i < sorted.length; i++) {
     const prevEnd = new Date(sorted[i - 1].endsAt).getTime();
@@ -201,7 +209,9 @@ export function validateScheduleConstraints(
     }))
     .filter((shift) => !Number.isNaN(new Date(shift.startsAt).getTime()));
 
-  const weekStarts = Array.from(new Set(normalized.map((shift) => getWeekStart(shift.date))));
+  const weekStarts = Array.from(
+    new Set(normalized.map((shift) => getWeekStart(shift.date))),
+  );
   for (const weekStart of weekStarts) {
     const hours = getHoursForWeek(normalized, weekStart);
     if (hours > 60) {

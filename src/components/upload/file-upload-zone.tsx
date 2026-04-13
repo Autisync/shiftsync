@@ -86,7 +86,9 @@ export function FileUploadZone({
     return dateTime;
   };
 
-  const getConstraintWarnings = (shifts: ShiftData[]): ConstraintViolation[] => {
+  const getConstraintWarnings = (
+    shifts: ShiftData[],
+  ): ConstraintViolation[] => {
     const scheduleShifts = shifts
       .filter((shift) => Boolean(shift.startTime) && Boolean(shift.endTime))
       .map((shift) => {
@@ -111,7 +113,9 @@ export function FileUploadZone({
       return;
     }
 
-    const employee = parsedResult.employees.find((e) => e.employeeId === employeeId);
+    const employee = parsedResult.employees.find(
+      (e) => e.employeeId === employeeId,
+    );
     if (!employee) {
       return;
     }
@@ -262,7 +266,7 @@ export function FileUploadZone({
   const showEmployeeSelector =
     parsedResult && parsedResult.employees.length > 1 && !selectedEmployeeId;
   const pendingWarnings = pendingEmployeeId
-    ? constraintWarningsByEmployee[pendingEmployeeId] ?? []
+    ? (constraintWarningsByEmployee[pendingEmployeeId] ?? [])
     : [];
 
   return (
@@ -461,7 +465,9 @@ export function FileUploadZone({
                   </p>
                   <ul className="list-disc pl-5 space-y-1">
                     {pendingWarnings.map((violation, index) => (
-                      <li key={`${violation.code}-${index}`}>{violation.message}</li>
+                      <li key={`${violation.code}-${index}`}>
+                        {violation.message}
+                      </li>
                     ))}
                   </ul>
                   <Button
