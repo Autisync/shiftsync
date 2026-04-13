@@ -431,7 +431,7 @@ async function upsertParsedShifts(input: {
     const usedUids = new Set<string>();
     const resolvedUidByShiftId = new Map<string, string>();
 
-    const rows = input.selectedEmployeeShifts.map((shift) => {
+    const rows: ShiftUpsertRow[] = input.selectedEmployeeShifts.map((shift) => {
       const role = roleFromShift(shift);
       const date = toIsoDate(shift.date);
       const location = shift.location ?? null;

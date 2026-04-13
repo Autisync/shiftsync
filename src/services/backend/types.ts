@@ -44,6 +44,14 @@ export interface UserService {
     userId: string,
     data: Partial<Pick<UserProfile, "fullName" | "email" | "employeeCode">>,
   ): Promise<UserProfile>;
+  getDefaultCalendarPreference(userId: string): Promise<{
+    calendarId: string;
+    calendarName: string | null;
+  } | null>;
+  saveDefaultCalendarPreference(
+    userId: string,
+    input: { calendarId: string; calendarName?: string | null },
+  ): Promise<void>;
 }
 
 // ── ShiftService ───────────────────────────────────────────────────────────
@@ -117,13 +125,20 @@ export interface SwapService {
       violations: Array<{ code: string; message: string }>;
     },
   ): Promise<SwapRequest>;
-  markHREmailSent(requestId: string): Promise<SwapRequest>;
+  markHREmailSent(
+    requestId: string,
+    actorUserId?: string,
+  ): Promise<SwapRequest>;
+  markHRApproved(requestId: string, actorUserId?: string): Promise<SwapRequest>;
   applySwap(requestId: string): Promise<SwapRequest>;
   getHRSettings(userId: string): Promise<HRSettings | null>;
   saveHRSettings(input: {
     userId: string;
     hrEmail: string;
     ccEmails: string[];
+    selectedCalendarId?: string | null;
+    selectedCalendarName?: string | null;
+    lastSyncedCalendarId?: string | null;
   }): Promise<HRSettings>;
 }
 

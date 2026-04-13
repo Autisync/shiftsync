@@ -224,10 +224,16 @@ export function buildCalendarDiffPlan(input: {
   const inScopeShifts = shifts.filter((shift) =>
     isInRange(shift.date, authoritativeRange),
   );
+  const activeSyncKeys = new Set(
+    inScopeShifts
+      .filter((shift) => shift.status !== "deleted")
+      .map((shift) => buildShiftSyncKey(shift, options.userId)),
+  );
   const matchingRecords = trackedRecords.filter(
     (record) =>
-      record.syncedStart.slice(0, 10) >= matchingRange.start &&
-      record.syncedStart.slice(0, 10) <= matchingRange.end,
+      activeSyncKeys.has(record.syncShiftKey) ||
+      (record.syncedStart.slice(0, 10) >= matchingRange.start &&
+        record.syncedStart.slice(0, 10) <= matchingRange.end),
   );
   const staleDeletionRecords = matchingRecords;
 

@@ -32,6 +32,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { getErrorMessage } from "@/lib/getErrorMessage";
 import { toast } from "sonner";
 import type { CalendarSyncPreviewChange } from "@/features/calendar/types";
+import type { ConstraintViolation } from "@/features/swaps/services/swap-constraints";
 
 const STORAGE_KEY_SELECTED_CALENDAR = "selected_calendar_id";
 
@@ -49,6 +50,7 @@ interface SyncConfirmationModalProps {
   }) => void;
   summary: SyncSummary & { noop?: number; failed?: number };
   changes: CalendarSyncPreviewChange[];
+  constraintWarnings?: ConstraintViolation[];
   onRequestPreview: (input: {
     calendarId: string;
     options: {
@@ -70,6 +72,7 @@ export function SyncConfirmationModal({
   onConfirm,
   summary,
   changes,
+  constraintWarnings = [],
   onRequestPreview,
   previewLoading,
   loading,
@@ -333,10 +336,8 @@ export function SyncConfirmationModal({
                         <div className="flex items-center gap-2">
                           {calendar.backgroundColor && (
                             <div
-                              className="w-3 h-3 rounded-full flex-shrink-0"
-                              style={{
-                                backgroundColor: calendar.backgroundColor,
-                              }}
+                              className="w-3 h-3 rounded-full flex-shrink-0 calendar-color-swatch"
+                              {...({ style: { "--swatch-color": calendar.backgroundColor } } as React.HTMLAttributes<HTMLDivElement>)}
                             />
                           )}
                           <span className="truncate text-xs sm:text-sm">
@@ -371,10 +372,8 @@ export function SyncConfirmationModal({
                   <div className="flex items-center gap-2 sm:gap-3">
                     {selectedCalendar.backgroundColor && (
                       <div
-                        className="w-6 h-6 sm:w-8 sm:h-8 rounded-lg shadow-sm flex-shrink-0"
-                        style={{
-                          backgroundColor: selectedCalendar.backgroundColor,
-                        }}
+                        className="w-6 h-6 sm:w-8 sm:h-8 rounded-lg shadow-sm flex-shrink-0 calendar-color-swatch"
+                        {...({ style: { "--swatch-color": selectedCalendar.backgroundColor } } as React.HTMLAttributes<HTMLDivElement>)}
                       />
                     )}
                     <div className="min-w-0 flex-1">
@@ -530,6 +529,25 @@ export function SyncConfirmationModal({
                   {summary.delete} evento{summary.delete !== 1 ? "s" : ""} de
                   turno será{summary.delete !== 1 ? "ão" : ""} removido
                   {summary.delete !== 1 ? "s" : ""} do seu calendário.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {constraintWarnings.length > 0 && (
+              <Alert className="bg-amber-50 border-amber-300">
+                <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                <AlertDescription className="text-xs sm:text-sm text-amber-900 space-y-2">
+                  <p className="font-semibold">
+                    Regras 6/60: foram detetadas possiveis violacoes neste horario.
+                  </p>
+                  <ul className="list-disc pl-5 space-y-1">
+                    {constraintWarnings.map((violation, index) => (
+                      <li key={`${violation.code}-${index}`}>{violation.message}</li>
+                    ))}
+                  </ul>
+                  <p>
+                    Pode continuar a sincronizacao, mas recomenda-se confirmar estes turnos antes de aplicar alteracoes.
+                  </p>
                 </AlertDescription>
               </Alert>
             )}

@@ -107,6 +107,12 @@ export interface CalendarSyncRecordRepository {
     calendarId: string;
     range: CalendarDateRange;
   }): Promise<CalendarSyncRecord[]>;
+  getRecordsBySyncKeys(input: {
+    userId: string;
+    provider: CalendarProvider;
+    calendarId: string;
+    syncShiftKeys: string[];
+  }): Promise<CalendarSyncRecord[]>;
   upsertRecord(input: {
     userId: string;
     provider: CalendarProvider;

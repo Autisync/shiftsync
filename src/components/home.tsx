@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useGoogleLogin } from "@react-oauth/google";
 import { AuthCard } from "@/components/auth/auth-card";
@@ -38,10 +38,13 @@ import { SwapsCalendarScreen } from "@/components/swaps/swaps-calendar-screen";
 import { useConsent } from "@/lib/cookies/ConsentContext";
 import { SpeedInsights } from "@vercel/speed-insights/react";
 import type { CalendarSyncPreviewChange } from "@/features/calendar/types";
+import { validateScheduleConstraints } from "@/features/swaps/services/swap-constraints";
 
 const STORAGE_KEYS = {
   ACCESS_TOKEN: "google_access_token",
   USER_EMAIL: "google_user_email",
+  DEFAULT_CALENDAR_ID: "default_calendar_id",
+  DEFAULT_CALENDAR_NAME: "default_calendar_name",
 };
 
 const PROFILE_ACK_PREFIX = "profile_prompt_ack";
@@ -95,6 +98,38 @@ function summarizeShiftInput(shifts: ShiftData[]): {
     unique_dates,
     rows,
   };
+}
+
+function toIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function toIsoDateTime(date: Date, time: string): Date {
+  const [hours = "0", minutes = "0"] = time.split(":");
+  const value = new Date(date);
+  value.setHours(Number(hours), Number(minutes), 0, 0);
+  return value;
+}
+
+function buildConstraintInputFromShifts(shifts: ShiftData[]) {
+  return shifts
+    .filter((shift) => Boolean(shift.startTime) && Boolean(shift.endTime))
+    .map((shift) => {
+      const startsAt = toIsoDateTime(shift.date, shift.startTime);
+      const endsAt = toIsoDateTime(shift.date, shift.endTime);
+      if (endsAt.getTime() <= startsAt.getTime()) {
+        endsAt.setDate(endsAt.getDate() + 1);
+      }
+
+      return {
+        date: toIsoDate(shift.date),
+        startsAt: startsAt.toISOString(),
+        endsAt: endsAt.toISOString(),
+      };
+    });
 }
 
 async function withTimeout<T>(
@@ -154,6 +189,61 @@ function Home() {
   const [selectedCalendar, setSelectedCalendar] = useState<string | null>(null);
   const [calendarName, setCalendarName] = useState<string>("");
 
+  const saveDefaultCalendarPreference = async (
+    calendarId: string,
+    name?: string,
+  ) => {
+    if (!currentUserId) return;
+
+    try {
+      await backend.users.saveDefaultCalendarPreference(currentUserId, {
+        calendarId,
+        calendarName: name ?? null,
+      });
+    } catch (error) {
+      console.warn(
+        "[ShiftSync] Could not persist default calendar preference:",
+        error,
+      );
+    }
+  };
+
+  const loadDefaultCalendarPreference = async (userId: string) => {
+    try {
+      const preference = await backend.users.getDefaultCalendarPreference(userId);
+      if (!preference?.calendarId) return;
+
+      setSelectedCalendar(preference.calendarId);
+      localStorage.setItem(
+        STORAGE_KEYS.DEFAULT_CALENDAR_ID,
+        preference.calendarId,
+      );
+
+      const resolvedName = preference.calendarName ?? "O Meu Calendário";
+      setCalendarName(resolvedName);
+      localStorage.setItem(STORAGE_KEYS.DEFAULT_CALENDAR_NAME, resolvedName);
+    } catch (error) {
+      console.warn(
+        "[ShiftSync] Could not load default calendar preference:",
+        error,
+      );
+    }
+  };
+
+  useEffect(() => {
+    const savedCalendarId = localStorage.getItem(STORAGE_KEYS.DEFAULT_CALENDAR_ID);
+    const savedCalendarName = localStorage.getItem(
+      STORAGE_KEYS.DEFAULT_CALENDAR_NAME,
+    );
+
+    if (savedCalendarId) {
+      setSelectedCalendar(savedCalendarId);
+    }
+    if (savedCalendarName) {
+      setCalendarName(savedCalendarName);
+    }
+  }, []);
+
   // Shifts state
   const [shifts, setShifts] = useState<ShiftData[]>([]);
   const [selectedEmployeeName, setSelectedEmployeeName] = useState<string>("");
@@ -187,6 +277,10 @@ function Home() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [calendarSyncCompatMode, setCalendarSyncCompatMode] = useState(false);
   const [uploadPersistenceOk, setUploadPersistenceOk] = useState(true);
+  const syncConstraintWarnings = useMemo(
+    () => validateScheduleConstraints(buildConstraintInputFromShifts(shifts)).violations,
+    [shifts],
+  );
 
   const loadUserProfile = async (userId: string) => {
     try {
@@ -228,6 +322,7 @@ function Home() {
             setCurrentStep("upload");
 
             void loadUserProfile(userId);
+            void loadDefaultCalendarPreference(userId);
 
             if (providerAccessToken) {
               localStorage.setItem(
@@ -279,6 +374,7 @@ function Home() {
       setCurrentStep("upload");
 
       void loadUserProfile(session.user.id);
+      void loadDefaultCalendarPreference(session.user.id);
     });
   }, [backend.users]);
 
@@ -665,6 +761,10 @@ function Home() {
       setSettingsInitialName(profile?.fullName ?? "");
       setSettingsInitialCode(profile?.employeeCode ?? "");
       setSettingsInitialEmail(profile?.email ?? userEmail);
+      setSelectedCalendar(
+        localStorage.getItem(STORAGE_KEYS.DEFAULT_CALENDAR_ID) ??
+          selectedCalendar,
+      );
       setSettingsLastUpdatedAt(profile?.updatedAt ?? null);
       setSettingsDialogOpen(true);
     } catch (error) {
@@ -740,7 +840,12 @@ function Home() {
         )}
 
         {isSwapsRoute && currentUserId ? (
-          <SwapsCalendarScreen userId={currentUserId} enabled={swapsEnabled} />
+          <SwapsCalendarScreen
+            userId={currentUserId}
+            enabled={swapsEnabled}
+            accessToken={accessToken}
+            calendarId={selectedCalendar}
+          />
         ) : null}
 
         {!isSwapsRoute ? (
@@ -752,6 +857,15 @@ function Home() {
                 onSelectCalendar={(id, name) => {
                   setSelectedCalendar(id);
                   setCalendarName(name || "O Meu Calendário");
+                  localStorage.setItem(STORAGE_KEYS.DEFAULT_CALENDAR_ID, id);
+                  localStorage.setItem(
+                    STORAGE_KEYS.DEFAULT_CALENDAR_NAME,
+                    name || "O Meu Calendário",
+                  );
+                  void saveDefaultCalendarPreference(
+                    id,
+                    name || "O Meu Calendário",
+                  );
                 }}
                 onTokenExpired={handleTokenExpired}
               />
@@ -789,6 +903,7 @@ function Home() {
           onConfirm={handleSync}
           summary={syncSummary}
           changes={previewChanges}
+          constraintWarnings={syncConstraintWarnings}
           onRequestPreview={requestSyncPreview}
           previewLoading={previewLoading}
           loading={syncing}
@@ -833,8 +948,17 @@ function Home() {
           initialEmail={settingsInitialEmail}
           initialFullName={settingsInitialName}
           initialEmployeeCode={settingsInitialCode}
+          accessToken={accessToken}
+          initialDefaultCalendarId={selectedCalendar}
+          initialDefaultCalendarName={calendarName}
           lastUpdatedAt={settingsLastUpdatedAt}
-          onSave={async ({ fullName, employeeCode, email }) => {
+          onSave={async ({
+            fullName,
+            employeeCode,
+            email,
+            defaultCalendarId,
+            defaultCalendarName,
+          }) => {
             if (!currentUserId) {
               throw new Error("User session not found");
             }
@@ -855,6 +979,27 @@ function Home() {
             setSettingsLastUpdatedAt(updatedProfile.updatedAt);
             setProfileInitialName(fullName);
             setProfileInitialCode(employeeCode);
+
+            if (defaultCalendarId) {
+              setSelectedCalendar(defaultCalendarId);
+              localStorage.setItem(
+                STORAGE_KEYS.DEFAULT_CALENDAR_ID,
+                defaultCalendarId,
+              );
+              void saveDefaultCalendarPreference(
+                defaultCalendarId,
+                defaultCalendarName || "O Meu Calendário",
+              );
+            }
+
+            if (defaultCalendarName) {
+              setCalendarName(defaultCalendarName);
+              localStorage.setItem(
+                STORAGE_KEYS.DEFAULT_CALENDAR_NAME,
+                defaultCalendarName,
+              );
+            }
+
             setSettingsDialogOpen(false);
             toast.success("Perfil atualizado nas configurações");
           }}

@@ -92,6 +92,12 @@
 .accent-border {
   border-left: 2px solid #b98b2f8e;
 }
+
+/* Calendar color swatch — background set via --swatch-color CSS variable */
+.calendar-color-swatch {
+  background-color: var(--swatch-color, transparent);
+}
+
 @layer base {
   * {
     @apply border-border;

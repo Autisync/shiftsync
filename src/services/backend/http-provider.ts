@@ -35,6 +35,10 @@ const httpAuth: AuthService = {
 const httpUsers: UserService = {
   getUserProfile: () => notImplemented("users.getUserProfile"),
   updateUserProfile: () => notImplemented("users.updateUserProfile"),
+  getDefaultCalendarPreference: () =>
+    notImplemented("users.getDefaultCalendarPreference"),
+  saveDefaultCalendarPreference: () =>
+    notImplemented("users.saveDefaultCalendarPreference"),
 };
 
 const httpShifts: ShiftService = {
@@ -64,6 +68,12 @@ const httpSwaps: SwapService = {
   getSwapRequestsForUser: () => notImplemented("swaps.getSwapRequestsForUser"),
   updateSwapStatus: (_id, _status, _actorUserId) =>
     notImplemented("swaps.updateSwapStatus"),
+  acceptSwapRequest: () => notImplemented("swaps.acceptSwapRequest"),
+  markHREmailSent: () => notImplemented("swaps.markHREmailSent"),
+  markHRApproved: () => notImplemented("swaps.markHRApproved"),
+  applySwap: () => notImplemented("swaps.applySwap"),
+  getHRSettings: () => notImplemented("swaps.getHRSettings"),
+  saveHRSettings: () => notImplemented("swaps.saveHRSettings"),
 };
 
 const httpLeave: LeaveService = {

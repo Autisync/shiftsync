@@ -58,9 +58,12 @@ export interface SwapAvailability {
 export type SwapRequestStatus =
   | "pending"
   | "accepted"
-  | "rejected"
   | "submitted_to_hr"
-  | "approved";
+  | "approved"
+  | "awaiting_hr_request"
+  | "rejected"
+  | "ready_to_apply"
+  | "applied";
 
 export interface SwapRequestStatusChange {
   status: SwapRequestStatus;
@@ -82,6 +85,11 @@ export interface SwapRequest {
   rejectedAt: string | null;
   submittedToHrAt: string | null;
   approvedAt: string | null;
+  requesterHrSent: boolean;
+  targetHrSent: boolean;
+  requesterHrApproved: boolean;
+  targetHrApproved: boolean;
+  calendarUpdateEnabled: boolean;
   ruleViolation: string | null;
   violationReason: string | null;
   hrEmailSent: boolean;
@@ -97,6 +105,9 @@ export interface HRSettings {
   userId: string;
   hrEmail: string;
   ccEmails: string[];
+  selectedCalendarId: string | null;
+  selectedCalendarName: string | null;
+  lastSyncedCalendarId: string | null;
   createdAt: string;
   updatedAt: string;
 }

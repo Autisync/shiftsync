@@ -169,6 +169,30 @@ function makeLocalCalendarRepository(
           lastError: null,
         }));
     },
+    async getRecordsBySyncKeys({ syncShiftKeys }) {
+      const keys = new Set(syncShiftKeys);
+      const map = loadLocalMap(userId, calendarId);
+      return Object.entries(map)
+        .filter(([syncShiftKey]) => keys.has(syncShiftKey))
+        .map(([syncShiftKey, entry]) => ({
+          id: syncShiftKey,
+          userId,
+          provider: "google" as const,
+          calendarId,
+          shiftId: null,
+          syncShiftKey,
+          externalEventId: entry.externalEventId,
+          shiftFingerprint: entry.shiftFingerprint,
+          syncedStart: entry.syncedStart,
+          syncedEnd: entry.syncedEnd,
+          syncedTitle: entry.syncedTitle,
+          syncedDescription: entry.syncedDescription,
+          syncedLocation: entry.syncedLocation,
+          lastSyncedAt: new Date().toISOString(),
+          syncStatus: entry.syncStatus,
+          lastError: null,
+        }));
+    },
     async upsertRecord(input) {
       const map = loadLocalMap(input.userId, input.calendarId);
       map[input.syncShiftKey] = {
@@ -207,19 +231,43 @@ async function persistShiftGoogleEventIds(input: {
   if (!supabase) return;
 
   const updates = input.shifts
-    .filter((shift) => Boolean(shift.shiftUid) && Boolean(shift.googleEventId))
+    .filter((shift) => Boolean(shift.shiftUid))
     .map((shift) => ({
       shift_uid: shift.shiftUid as string,
-      google_event_id: shift.googleEventId as string,
+      google_event_id: shift.googleEventId ?? null,
+      date: shift.date.toISOString().slice(0, 10),
+      starts_at: (() => {
+        const date = new Date(shift.date);
+        const [h, m] = shift.startTime.split(":").map(Number);
+        date.setHours(h || 0, m || 0, 0, 0);
+        return date.toISOString();
+      })(),
+      ends_at: (() => {
+        const date = new Date(shift.date);
+        const [h, m] = shift.endTime.split(":").map(Number);
+        date.setHours(h || 0, m || 0, 0, 0);
+        return date.toISOString();
+      })(),
+      location: shift.location ?? null,
+      role: shift.notes ?? null,
+      status: shift.status === "deleted" ? "deleted" : "active",
     }));
 
   for (const row of updates) {
     const { error } = await supabase
       .from("shifts")
-      .update({ google_event_id: row.google_event_id })
+      .update({
+        google_event_id: row.google_event_id,
+        date: row.date,
+        starts_at: row.starts_at,
+        ends_at: row.ends_at,
+        location: row.location,
+        role: row.role,
+        status: row.status,
+      })
       .eq("user_id", input.userId)
       .eq("shift_uid", row.shift_uid)
-      .neq("status", "deleted");
+      .or("status.eq.active,status.eq.deleted");
 
     if (error) {
       console.warn(
@@ -248,6 +296,44 @@ const supabaseCalendarRecords: CalendarSyncRecordRepository = {
       .eq("calendar_id", calendarId)
       .gte("synced_start", range.start)
       .lte("synced_start", `${range.end}T23:59:59Z`);
+
+    if (error) throw error;
+
+    return (data ?? []).map((row) => ({
+      id: row.id as string,
+      userId: row.user_id as string,
+      provider: row.provider as "google",
+      calendarId: row.calendar_id as string,
+      shiftId: (row.shift_id as string | null) ?? null,
+      syncShiftKey: row.sync_shift_key as string,
+      externalEventId: row.external_event_id as string,
+      shiftFingerprint: row.shift_fingerprint as string,
+      syncedStart: row.synced_start as string,
+      syncedEnd: row.synced_end as string,
+      syncedTitle: row.synced_title as string,
+      syncedDescription: (row.synced_description as string | null) ?? null,
+      syncedLocation: (row.synced_location as string | null) ?? null,
+      lastSyncedAt: row.last_synced_at as string,
+      syncStatus: row.sync_status as "ok" | "failed",
+      lastError: (row.last_error as string | null) ?? null,
+    }));
+  },
+
+  async getRecordsBySyncKeys({ userId, provider, calendarId, syncShiftKeys }) {
+    if (syncShiftKeys.length === 0) {
+      return [];
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
+
+    const { data, error } = await supabase
+      .from("calendar_sync_records")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("provider", provider)
+      .eq("calendar_id", calendarId)
+      .in("sync_shift_key", syncShiftKeys);
 
     if (error) throw error;
 
@@ -557,6 +643,50 @@ const supabaseUsers: UserService = {
       .single();
     if (error) throw error;
     return toUserProfile(data);
+  },
+
+  async getDefaultCalendarPreference(userId: string): Promise<{
+    calendarId: string;
+    calendarName: string | null;
+  } | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+
+    const { data, error } = await supabase
+      .from("user_calendar_preferences")
+      .select("calendar_id, calendar_name")
+      .eq("user_id", userId)
+      .single();
+
+    if (error?.code === "PGRST116") {
+      return null;
+    }
+    if (error) throw error;
+    if (!data) return null;
+
+    return {
+      calendarId: data.calendar_id as string,
+      calendarName: (data.calendar_name as string | null) ?? null,
+    };
+  },
+
+  async saveDefaultCalendarPreference(
+    userId: string,
+    input: { calendarId: string; calendarName?: string | null },
+  ): Promise<void> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { error } = await supabase.from("user_calendar_preferences").upsert(
+      {
+        user_id: userId,
+        calendar_id: input.calendarId,
+        calendar_name: input.calendarName ?? null,
+      },
+      { onConflict: "user_id" },
+    );
+
+    if (error) throw error;
   },
 };
 
@@ -968,7 +1098,7 @@ const supabaseSwaps: SwapService = {
       return toSwapRequest(assertNoError({ data, error }));
     }
 
-    // Valid: move to accepted
+    // Valid: move to awaiting HR flow
     const { data: existingData, error: existingError } = await supabase
       .from("swap_requests")
       .select("*")
@@ -986,12 +1116,12 @@ const supabaseSwaps: SwapService = {
     const { data, error } = await supabase
       .from("swap_requests")
       .update({
-        status: "accepted",
+        status: "awaiting_hr_request",
         accepted_at: now,
         status_history: [
           ...currentHistory,
           {
-            status: "accepted",
+            status: "awaiting_hr_request",
             changed_at: now,
             changed_by_user_id: targetUserId,
           },
@@ -1003,7 +1133,10 @@ const supabaseSwaps: SwapService = {
     return toSwapRequest(assertNoError({ data, error }));
   },
 
-  async markHREmailSent(requestId: string): Promise<SwapRequest> {
+  async markHREmailSent(
+    requestId: string,
+    actorUserId?: string,
+  ): Promise<SwapRequest> {
     const supabase = getSupabaseClient();
     if (!supabase) throw new Error("Supabase client unavailable");
 
@@ -1022,24 +1155,47 @@ const supabaseSwaps: SwapService = {
       ? existing.status_history
       : [];
 
+    const actor = actorUserId ?? null;
+    if (
+      actor &&
+      actor !== existing.requester_user_id &&
+      actor !== existing.target_user_id
+    ) {
+      throw new Error("Apenas participantes da troca podem enviar para RH.");
+    }
+
+    const requesterHrSent =
+      (existing as { requester_hr_sent?: boolean }).requester_hr_sent ?? false;
+    const targetHrSent =
+      (existing as { target_hr_sent?: boolean }).target_hr_sent ?? false;
+
+    const nextRequesterHrSent =
+      actor === existing.requester_user_id ? true : requesterHrSent;
+    const nextTargetHrSent =
+      actor === existing.target_user_id ? true : targetHrSent;
+    const bothSent = nextRequesterHrSent && nextTargetHrSent;
+
     const patch: {
       hr_email_sent: boolean;
+      requester_hr_sent: boolean;
+      target_hr_sent: boolean;
       status?: SwapRequestStatus;
       submitted_to_hr_at?: string;
       status_history?: unknown[];
     } = {
-      hr_email_sent: true,
+      hr_email_sent: bothSent,
+      requester_hr_sent: nextRequesterHrSent,
+      target_hr_sent: nextTargetHrSent,
     };
 
-    if (existing.status !== "submitted_to_hr") {
-      patch.status = "submitted_to_hr";
-      patch.submitted_to_hr_at = now;
+    if (bothSent && existing.status !== "awaiting_hr_request") {
+      patch.status = "awaiting_hr_request";
       patch.status_history = [
         ...currentHistory,
         {
-          status: "submitted_to_hr",
+          status: "awaiting_hr_request",
           changed_at: now,
-          changed_by_user_id: null,
+          changed_by_user_id: actor,
         },
       ];
     }
@@ -1054,6 +1210,85 @@ const supabaseSwaps: SwapService = {
       .eq("id", requestId)
       .select()
       .single();
+    return toSwapRequest(assertNoError({ data, error }));
+  },
+
+  async markHRApproved(
+    requestId: string,
+    actorUserId?: string,
+  ): Promise<SwapRequest> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data: existingData, error: existingError } = await supabase
+      .from("swap_requests")
+      .select("*")
+      .eq("id", requestId)
+      .single();
+    const existing = assertNoError({
+      data: existingData,
+      error: existingError,
+    });
+
+    const actor = actorUserId ?? null;
+    if (
+      actor &&
+      actor !== existing.requester_user_id &&
+      actor !== existing.target_user_id
+    ) {
+      throw new Error(
+        "Apenas participantes da troca podem marcar aprovacao RH.",
+      );
+    }
+
+    const now = new Date().toISOString();
+    const currentHistory = Array.isArray(existing.status_history)
+      ? existing.status_history
+      : [];
+    const requesterApproved =
+      (existing as { requester_hr_approved?: boolean }).requester_hr_approved ??
+      false;
+    const targetApproved =
+      (existing as { target_hr_approved?: boolean }).target_hr_approved ??
+      false;
+
+    const nextRequesterApproved =
+      actor === existing.requester_user_id ? true : requesterApproved;
+    const nextTargetApproved =
+      actor === existing.target_user_id ? true : targetApproved;
+    const bothApproved = nextRequesterApproved && nextTargetApproved;
+
+    const patch: {
+      requester_hr_approved: boolean;
+      target_hr_approved: boolean;
+      status?: SwapRequestStatus;
+      approved_at?: string;
+      status_history?: unknown[];
+    } = {
+      requester_hr_approved: nextRequesterApproved,
+      target_hr_approved: nextTargetApproved,
+    };
+
+    if (bothApproved && existing.status !== "ready_to_apply") {
+      patch.status = "ready_to_apply";
+      patch.approved_at = now;
+      patch.status_history = [
+        ...currentHistory,
+        {
+          status: "ready_to_apply",
+          changed_at: now,
+          changed_by_user_id: actor,
+        },
+      ];
+    }
+
+    const { data, error } = await supabase
+      .from("swap_requests")
+      .update(patch)
+      .eq("id", requestId)
+      .select()
+      .single();
+
     return toSwapRequest(assertNoError({ data, error }));
   },
 
@@ -1111,6 +1346,9 @@ const supabaseSwaps: SwapService = {
     userId: string;
     hrEmail: string;
     ccEmails: string[];
+    selectedCalendarId?: string | null;
+    selectedCalendarName?: string | null;
+    lastSyncedCalendarId?: string | null;
   }): Promise<HRSettings> {
     const supabase = getSupabaseClient();
     if (!supabase) throw new Error("Supabase client unavailable");
@@ -1122,6 +1360,9 @@ const supabaseSwaps: SwapService = {
           user_id: input.userId,
           hr_email: input.hrEmail,
           cc_emails: input.ccEmails,
+          selected_calendar_id: input.selectedCalendarId ?? null,
+          selected_calendar_name: input.selectedCalendarName ?? null,
+          last_synced_calendar_id: input.lastSyncedCalendarId ?? null,
         },
         { onConflict: "user_id" },
       )

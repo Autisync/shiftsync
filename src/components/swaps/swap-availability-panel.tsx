@@ -262,7 +262,10 @@ export function SwapAvailabilityPanel({
         }
 
         const name =
-          profile.fullName || profile.email || profile.employeeCode || shortId(profile.id);
+          profile.fullName ||
+          profile.email ||
+          profile.employeeCode ||
+          shortId(profile.id);
         resolvedNames[result.value.id] = name;
       }
 
@@ -518,7 +521,7 @@ export function SwapAvailabilityPanel({
     setError(null);
 
     try {
-      await api.swaps.markHREmailSent(requestId);
+      await api.swaps.markHREmailSent(requestId, userId);
       setEmailDraftByRequestId((prev) => {
         const next = { ...prev };
         delete next[requestId];
@@ -552,10 +555,14 @@ export function SwapAvailabilityPanel({
         await navigator.clipboard.writeText(clipboardPayload);
         setFeedback("Conteudo do email copiado para a area de transferencia.");
       } else {
-        setFeedback("Clipboard indisponivel neste navegador. Copie manualmente.");
+        setFeedback(
+          "Clipboard indisponivel neste navegador. Copie manualmente.",
+        );
       }
     } catch {
-      setFeedback("Nao foi possivel copiar automaticamente. Copie manualmente.");
+      setFeedback(
+        "Nao foi possivel copiar automaticamente. Copie manualmente.",
+      );
     }
   };
 
@@ -648,7 +655,9 @@ export function SwapAvailabilityPanel({
         {emailDraftByRequestId[request.id] && !request.hrEmailSent && (
           <div className="mt-2 space-y-2 rounded border border-amber-300 bg-amber-50 px-2 py-2 text-xs text-amber-900">
             <p className="font-medium">Rascunho de email pronto</p>
-            <p>Escolha como enviar e, depois do envio real, marque no sistema.</p>
+            <p>
+              Escolha como enviar e, depois do envio real, marque no sistema.
+            </p>
             <div className="flex flex-wrap gap-2">
               <a
                 href={emailDraftByRequestId[request.id].gmailCompose}
@@ -785,7 +794,7 @@ export function SwapAvailabilityPanel({
             <p>Aceite em: {formatDateTime(request.acceptedAt)}</p>
             <p>Rejeitado em: {formatDateTime(request.rejectedAt)}</p>
             <p>
-              Submetido ao RH em: {" "}
+              Submetido ao RH em:{" "}
               {formatDateTime(
                 request.submittedToHrAt ??
                   (request.hrEmailSent ? request.updatedAt : null),

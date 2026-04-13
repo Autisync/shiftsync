@@ -5,7 +5,10 @@ import {
   extractEventMetadata,
   type CalendarProviderAdapter,
 } from "@/features/calendar/services/googleCalendarAdapter";
-import { resolveDateRangeFromShifts } from "@/features/calendar/utils/eventFingerprint";
+import {
+  buildShiftSyncKey,
+  resolveDateRangeFromShifts,
+} from "@/features/calendar/utils/eventFingerprint";
 import { buildShiftUidFromShift } from "@/shared/utils/shift-uid";
 import type {
   CalendarSyncExecutionResult,
@@ -58,6 +61,38 @@ function addDays(dateOnly: string, days: number): string {
   const date = new Date(`${dateOnly}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function toHHmm(value: string): string {
+  const date = new Date(value);
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function reconcileShiftWithGoogleEvent(
+  shift: ShiftData,
+  event: {
+    summary?: string;
+    start?: { dateTime?: string };
+    end?: { dateTime?: string };
+  },
+): ShiftData {
+  const startDateTime = event.start?.dateTime;
+  const endDateTime = event.end?.dateTime;
+
+  if (!startDateTime || !endDateTime) {
+    return shift;
+  }
+
+  return {
+    ...shift,
+    date: new Date(startDateTime),
+    startTime: toHHmm(startDateTime),
+    endTime: toHHmm(endDateTime),
+    notes: event.summary ?? shift.notes,
+    status: shift.status === "deleted" ? "deleted" : "modified",
+  };
 }
 
 function expandRepositoryRange(range: { start: string; end: string }): {
@@ -160,12 +195,39 @@ export class CalendarSyncService {
     const range = options.dateRange ?? resolveDateRangeFromShifts(input.shifts);
     const repositoryRange = expandRepositoryRange(range);
 
-    const trackedRecords = await this.records.getRecordsForRange({
-      userId: options.userId,
-      provider: options.provider,
-      calendarId: options.calendarId,
-      range: repositoryRange,
-    });
+    const syncShiftKeys = input.shifts
+      .filter((shift) => shift.status !== "deleted")
+      .map((shift) => buildShiftSyncKey(shift, options.userId));
+
+    const keyLookup =
+      "getRecordsBySyncKeys" in this.records
+        ? (
+            this.records as CalendarSyncRecordRepository & {
+              getRecordsBySyncKeys: CalendarSyncRecordRepository["getRecordsBySyncKeys"];
+            }
+          ).getRecordsBySyncKeys({
+            userId: options.userId,
+            provider: options.provider,
+            calendarId: options.calendarId,
+            syncShiftKeys,
+          })
+        : Promise.resolve([]);
+
+    const [rangeRecords, keyRecords] = await Promise.all([
+      this.records.getRecordsForRange({
+        userId: options.userId,
+        provider: options.provider,
+        calendarId: options.calendarId,
+        range: repositoryRange,
+      }),
+      keyLookup,
+    ]);
+
+    const trackedRecordsById = new Map<string, (typeof rangeRecords)[number]>();
+    for (const record of [...rangeRecords, ...keyRecords]) {
+      trackedRecordsById.set(record.id, record);
+    }
+    const trackedRecords = [...trackedRecordsById.values()];
 
     const plan = buildCalendarDiffPlan({
       shifts: input.shifts,
@@ -188,24 +250,84 @@ export class CalendarSyncService {
     const repositoryRange = expandRepositoryRange(range);
     const adapter = this.adapterFactory(input.accessToken);
 
-    const trackedRecords = await this.records.getRecordsForRange({
-      userId: options.userId,
-      provider: options.provider,
-      calendarId: options.calendarId,
-      range: repositoryRange,
-    });
+    const syncShiftKeys = input.shifts
+      .filter((shift) => shift.status !== "deleted")
+      .map((shift) => buildShiftSyncKey(shift, options.userId));
+
+    const keyLookup =
+      "getRecordsBySyncKeys" in this.records
+        ? (
+            this.records as CalendarSyncRecordRepository & {
+              getRecordsBySyncKeys: CalendarSyncRecordRepository["getRecordsBySyncKeys"];
+            }
+          ).getRecordsBySyncKeys({
+            userId: options.userId,
+            provider: options.provider,
+            calendarId: options.calendarId,
+            syncShiftKeys,
+          })
+        : Promise.resolve([]);
+
+    const [rangeRecords, keyRecords] = await Promise.all([
+      this.records.getRecordsForRange({
+        userId: options.userId,
+        provider: options.provider,
+        calendarId: options.calendarId,
+        range: repositoryRange,
+      }),
+      keyLookup,
+    ]);
+
+    const trackedRecordsById = new Map<string, (typeof rangeRecords)[number]>();
+    for (const record of [...rangeRecords, ...keyRecords]) {
+      trackedRecordsById.set(record.id, record);
+    }
+    const trackedRecords = [...trackedRecordsById.values()];
+
+    let shiftsForPlan = [...input.shifts];
+
+    if (adapter.listEvents) {
+      try {
+        const events = await adapter.listEvents(options.calendarId, {
+          timeMin: `${range.start}T00:00:00Z`,
+          timeMax: `${range.end}T23:59:59Z`,
+        });
+        const eventsById = new Map(events.map((event) => [event.id, event]));
+
+        shiftsForPlan = shiftsForPlan.map((shift) => {
+          const eventId = shift.googleEventId;
+          if (!eventId) {
+            return shift;
+          }
+
+          const googleEvent = eventsById.get(eventId);
+          if (!googleEvent) {
+            // Event removed in Google: reflect this in ShiftSync as deleted.
+            return {
+              ...shift,
+              googleEventId: undefined,
+              status: "deleted",
+            };
+          }
+
+          return reconcileShiftWithGoogleEvent(shift, googleEvent);
+        });
+      } catch {
+        // Keep standard behavior if event listing fails.
+      }
+    }
 
     const plan = buildCalendarDiffPlan({
-      shifts: input.shifts,
+      shifts: shiftsForPlan,
       trackedRecords,
       options: { ...options, dateRange: range },
     });
     const changes = toPreviewChanges(plan.actions);
-    logIdentityConsistency(input.shifts, options.userId);
+    logIdentityConsistency(shiftsForPlan, options.userId);
 
     console.info("[CalendarSync][PreSync][DBShifts]", {
       user_id: options.userId,
-      rows: input.shifts.map((shift) => ({
+      rows: shiftsForPlan.map((shift) => ({
         shift_uid:
           shift.shiftUid ?? buildShiftUidFromShift(shift, options.userId),
         google_event_id: shift.googleEventId ?? null,
@@ -275,7 +397,7 @@ export class CalendarSyncService {
     const errors: CalendarSyncExecutionResult["errors"] = [];
     const syncedShifts: ShiftData[] = [];
 
-    const byId = new Map(input.shifts.map((shift) => [shift.id, shift]));
+    const byId = new Map(shiftsForPlan.map((shift) => [shift.id, shift]));
 
     const createdBySyncShiftKey = new Set<string>();
 
@@ -652,7 +774,7 @@ export class CalendarSyncService {
       }
     }
 
-    for (const original of input.shifts) {
+    for (const original of shiftsForPlan) {
       const alreadyIncluded = syncedShifts.some(
         (shift) => shift.id === original.id,
       );

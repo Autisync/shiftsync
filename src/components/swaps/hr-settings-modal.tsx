@@ -27,6 +27,8 @@ export function HRSettingsModal({
 }: HRSettingsModalProps) {
   const [hrEmail, setHrEmail] = useState("");
   const [ccEmails, setCcEmails] = useState("");
+  const [selectedCalendarId, setSelectedCalendarId] = useState("");
+  const [selectedCalendarName, setSelectedCalendarName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -40,6 +42,8 @@ export function HRSettingsModal({
         if (settings) {
           setHrEmail(settings.hrEmail);
           setCcEmails(settings.ccEmails.join(", "));
+          setSelectedCalendarId(settings.selectedCalendarId ?? "");
+          setSelectedCalendarName(settings.selectedCalendarName ?? "");
         }
       } catch (err) {
         setError(getErrorMessage(err));
@@ -68,6 +72,8 @@ export function HRSettingsModal({
         userId,
         hrEmail: hrEmail.trim(),
         ccEmails: cc,
+        selectedCalendarId: selectedCalendarId.trim() || null,
+        selectedCalendarName: selectedCalendarName.trim() || null,
       });
 
       setSuccess("HR settings saved successfully");
@@ -92,16 +98,18 @@ export function HRSettingsModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4">
-          <h2 className="text-lg font-semibold text-slate-900">HR Settings</h2>
+          <h2 className="text-lg font-semibold text-slate-900">
+            Definicoes de RH
+          </h2>
           <p className="text-sm text-slate-600">
-            Configure where swap requests will be sent
+            Configure para onde os pedidos serao enviados
           </p>
         </div>
 
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700">
-              HR Email Address *
+              Email de RH *
             </label>
             <input
               type="email"
@@ -115,7 +123,7 @@ export function HRSettingsModal({
 
           <div>
             <label className="block text-sm font-medium text-slate-700">
-              CC Emails (comma-separated)
+              Emails em CC (separados por virgula)
             </label>
             <input
               type="text"
@@ -126,8 +134,36 @@ export function HRSettingsModal({
               disabled={loading}
             />
             <p className="mt-1 text-xs text-slate-500">
-              Leave blank if no CC emails are needed
+              Deixe vazio se nao precisar de CC
             </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700">
+              ID do calendario alvo (opcional)
+            </label>
+            <input
+              type="text"
+              value={selectedCalendarId}
+              onChange={(e) => setSelectedCalendarId(e.target.value)}
+              placeholder="primary ou id@group.calendar.google.com"
+              className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              disabled={loading}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700">
+              Nome do calendario alvo (opcional)
+            </label>
+            <input
+              type="text"
+              value={selectedCalendarName}
+              onChange={(e) => setSelectedCalendarName(e.target.value)}
+              placeholder="Calendario Principal"
+              className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              disabled={loading}
+            />
           </div>
 
           {error && (
@@ -150,10 +186,10 @@ export function HRSettingsModal({
             disabled={loading}
             className="flex-1"
           >
-            Cancel
+            Cancelar
           </Button>
           <Button onClick={handleSave} disabled={loading} className="flex-1">
-            {loading ? "Saving..." : "Save"}
+            {loading ? "A guardar..." : "Guardar"}
           </Button>
         </div>
       </div>

@@ -70,6 +70,20 @@ export function toSwapRequest(row: DbSwapRequestRow): SwapRequest {
     rejectedAt: row.rejected_at,
     submittedToHrAt: row.submitted_to_hr_at,
     approvedAt: row.approved_at,
+    requesterHrSent:
+      (row as unknown as { requester_hr_sent?: boolean }).requester_hr_sent ??
+      false,
+    targetHrSent:
+      (row as unknown as { target_hr_sent?: boolean }).target_hr_sent ?? false,
+    requesterHrApproved:
+      (row as unknown as { requester_hr_approved?: boolean })
+        .requester_hr_approved ?? false,
+    targetHrApproved:
+      (row as unknown as { target_hr_approved?: boolean }).target_hr_approved ??
+      false,
+    calendarUpdateEnabled:
+      (row as unknown as { calendar_update_enabled?: boolean })
+        .calendar_update_enabled ?? false,
     ruleViolation:
       (row as unknown as { rule_violation?: string }).rule_violation ?? null,
     violationReason:

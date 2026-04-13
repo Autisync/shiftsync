@@ -9,6 +9,7 @@ import {
 interface SwapRequestCardProps {
   request: SwapRequest;
   currentUserId: string;
+  hasGoogleSyncContext?: boolean;
   userDisplayNames?: Record<string, string>;
   shiftById?: Record<string, Shift>;
   onStatusChange: (request: SwapRequest, status: SwapRequestStatus) => void;
@@ -44,9 +45,29 @@ function formatShiftDateTime(shift: Shift | null | undefined): string {
   return `${date}, ${start}-${end}`;
 }
 
+function formatViolationMessage(request: SwapRequest): string {
+  if (request.violationReason) return request.violationReason;
+
+  switch (request.ruleViolation) {
+    case "MAX_HOURS_EXCEEDED_REQUESTER":
+      return "Troca nao possivel devido a regra 6/60: o requisitante excederia 60 horas por semana.";
+    case "MAX_CONSECUTIVE_DAYS_EXCEEDED_REQUESTER":
+      return "Troca nao possivel devido a regra 6/60: o requisitante excederia 6 dias consecutivos.";
+    case "MAX_HOURS_EXCEEDED_TARGET":
+      return "Troca nao possivel devido a regra 6/60: o colega excederia 60 horas por semana.";
+    case "MAX_CONSECUTIVE_DAYS_EXCEEDED_TARGET":
+      return "Troca nao possivel devido a regra 6/60: o colega excederia 6 dias consecutivos.";
+    case "SHIFT_NOT_FOUND":
+      return "Troca nao possivel devido a regra 6/60 (turno do requisitante nao encontrado).";
+    default:
+      return request.ruleViolation ?? "Troca nao possivel devido a regra 6/60.";
+  }
+}
+
 export function SwapRequestCard({
   request,
   currentUserId,
+  hasGoogleSyncContext = false,
   userDisplayNames,
   shiftById,
   onStatusChange,
@@ -54,6 +75,19 @@ export function SwapRequestCard({
   onApplySwap,
 }: SwapRequestCardProps) {
   const received = request.targetUserId === currentUserId;
+  const isRequester = request.requesterUserId === currentUserId;
+  const isTarget = request.targetUserId === currentUserId;
+  const currentUserHrSent = isRequester
+    ? request.requesterHrSent
+    : isTarget
+      ? request.targetHrSent
+      : false;
+  const currentUserHrApproved = isRequester
+    ? request.requesterHrApproved
+    : isTarget
+      ? request.targetHrApproved
+      : false;
+  const readyForApply = request.status === "ready_to_apply";
   const requesterName =
     userDisplayNames?.[request.requesterUserId] ??
     request.requesterUserId.slice(0, 8);
@@ -100,12 +134,25 @@ export function SwapRequestCard({
             )}
           </p>
         </div>
+        {(request.status === "awaiting_hr_request" || readyForApply) && (
+          <div className="rounded border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-700">
+            <p>
+              RH enviado: requisitante {request.requesterHrSent ? "sim" : "nao"}
+              , colega {request.targetHrSent ? "sim" : "nao"}
+            </p>
+            <p>
+              RH aprovado: requisitante{" "}
+              {request.requesterHrApproved ? "sim" : "nao"}, colega{" "}
+              {request.targetHrApproved ? "sim" : "nao"}
+            </p>
+          </div>
+        )}
       </div>
 
       {request.ruleViolation ? (
         <div className="mt-2 rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700 flex items-start gap-1">
           <TriangleAlert className="h-3 w-3 mt-0.5" />
-          <span>{request.violationReason || request.ruleViolation}</span>
+          <span>{formatViolationMessage(request)}</span>
         </div>
       ) : null}
 
@@ -114,7 +161,7 @@ export function SwapRequestCard({
           <>
             <Button
               size="sm"
-              onClick={() => onStatusChange(request, "accepted")}
+              onClick={() => onStatusChange(request, "awaiting_hr_request")}
             >
               Aceitar
             </Button>
@@ -128,27 +175,43 @@ export function SwapRequestCard({
           </>
         ) : null}
 
-        {request.status === "accepted" &&
-        request.requesterUserId === currentUserId ? (
+        {request.status === "awaiting_hr_request" &&
+        (isRequester || isTarget) &&
+        !currentUserHrSent ? (
           <Button size="sm" onClick={() => onSendToHr(request)}>
             <Mail className="mr-1 h-3 w-3" />
             Enviar para RH
           </Button>
         ) : null}
 
-        {request.status === "submitted_to_hr" &&
-        request.requesterUserId === currentUserId ? (
-          <Button size="sm" onClick={() => onStatusChange(request, "approved")}>
-            Marcar como aprovado
+        {request.status === "awaiting_hr_request" &&
+        currentUserHrSent &&
+        !currentUserHrApproved ? (
+          <Button
+            size="sm"
+            onClick={() => onStatusChange(request, "ready_to_apply")}
+          >
+            Marcar RH aprovado
           </Button>
         ) : null}
 
-        {request.status === "approved" &&
+        {readyForApply &&
         request.requesterUserId === currentUserId &&
         !request.calendarApplied ? (
-          <Button size="sm" onClick={() => onApplySwap(request)}>
+          <Button
+            size="sm"
+            disabled={!hasGoogleSyncContext}
+            title={
+              hasGoogleSyncContext
+                ? ""
+                : "Selecione um calendario Google para atualizar."
+            }
+            onClick={() => onApplySwap(request)}
+          >
             <CalendarCheck2 className="mr-1 h-3 w-3" />
-            Atualizar calendario
+            {hasGoogleSyncContext
+              ? "Atualizar calendario"
+              : "Selecione calendario Google"}
           </Button>
         ) : null}
       </div>

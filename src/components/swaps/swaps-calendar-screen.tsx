@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import type { View } from "react-big-calendar";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { getBackend } from "@/services/backend/backend-provider";
 import type { BackendServices } from "@/services/backend/types";
@@ -31,11 +32,15 @@ import type {
 } from "@/components/swaps/swap-calendar.types";
 import { SwapSuggestionCard } from "@/components/swaps/SwapSuggestionCard";
 import { HRSettingsModal } from "@/components/swaps/hr-settings-modal";
+import { getSupabaseClient } from "@/lib/supabase-client";
+import type { ShiftData } from "@/types/shift";
 
 interface SwapsCalendarScreenProps {
   userId: string;
   enabled: boolean;
-  backend?: Pick<BackendServices, "shifts" | "swaps" | "users">;
+  accessToken?: string | null;
+  calendarId?: string | null;
+  backend?: Pick<BackendServices, "shifts" | "swaps" | "users" | "calendar">;
 }
 
 function fallbackProfile(userId: string): UserProfile {
@@ -78,7 +83,7 @@ function deriveStatusForShift(
   if (violation) {
     return { status: "violation", request: latest, violation: true };
   }
-  if (latest.status === "approved") {
+  if (latest.status === "ready_to_apply") {
     return { status: "approved", request: latest, violation: false };
   }
   if (latest.status === "rejected") {
@@ -101,6 +106,8 @@ function deriveStatusForShift(
 export function SwapsCalendarScreen({
   userId,
   enabled,
+  accessToken = null,
+  calendarId = null,
   backend,
 }: SwapsCalendarScreenProps) {
   const api = backend ?? getBackend();
@@ -124,6 +131,7 @@ export function SwapsCalendarScreen({
   >({});
   const [hrSettingsOpen, setHrSettingsOpen] = useState(false);
   const [hrSettings, setHrSettings] = useState<HRSettings | null>(null);
+  const resolvedCalendarId = calendarId ?? hrSettings?.selectedCalendarId;
 
   const [selectedEvent, setSelectedEvent] =
     useState<SwapCalendarEventItem | null>(null);
@@ -301,7 +309,38 @@ export function SwapsCalendarScreen({
     setBusyMatchKey(key);
     setError(null);
     setFeedback(null);
+
+    const verifySupabaseConnection = async (): Promise<boolean> => {
+      const client = getSupabaseClient();
+      if (!client) {
+        const message =
+          "Ligacao ao Supabase indisponivel. Verifique as configuracoes e tente novamente.";
+        setError(message);
+        toast.error(message);
+        return false;
+      }
+
+      const { error: pingError } = await client
+        .from("swap_requests")
+        .select("id", { head: true, count: "exact" })
+        .limit(1);
+
+      if (pingError) {
+        const message = `Falha de ligacao ao Supabase: ${getErrorMessage(pingError)}`;
+        setError(message);
+        toast.error(message);
+        return false;
+      }
+
+      return true;
+    };
+
     try {
+      const isConnected = await verifySupabaseConnection();
+      if (!isConnected) {
+        return;
+      }
+
       await api.swaps.createSwapRequest({
         requesterUserId: userId,
         requesterShiftId: match.ownShift.id,
@@ -310,9 +349,13 @@ export function SwapsCalendarScreen({
         message: `Sugestao de calendario com score ${match.score}`,
       });
       setFeedback("Pedido de troca enviado.");
+      setSelectedEvent(null);
+      toast.success("Pedido de troca enviado com sucesso.");
       await loadData(true);
     } catch (err) {
-      setError(getErrorMessage(err));
+      const message = getErrorMessage(err);
+      setError(message);
+      toast.error(`Falha ao enviar pedido: ${message}`);
     } finally {
       setBusyMatchKey(null);
     }
@@ -325,7 +368,7 @@ export function SwapsCalendarScreen({
     setError(null);
     setFeedback(null);
     try {
-      if (status === "accepted") {
+      if (status === "awaiting_hr_request") {
         const requesterShifts = await api.shifts.getShiftsForUser(
           request.requesterUserId,
         );
@@ -342,8 +385,12 @@ export function SwapsCalendarScreen({
         setFeedback(
           validation.valid
             ? "Pedido aceite."
-            : "Aceite com violacoes de regras.",
+            : validation.violations[0]?.message ||
+                "Troca nao possivel devido a regra 6/60.",
         );
+      } else if (status === "ready_to_apply") {
+        await api.swaps.markHRApproved(request.id, userId);
+        setFeedback("Aprovacao RH marcada.");
       } else {
         await api.swaps.updateSwapStatus(request.id, status, userId);
         setFeedback(`Pedido atualizado para ${status}.`);
@@ -419,7 +466,7 @@ export function SwapsCalendarScreen({
       setFeedback(
         "Rascunho de email aberto. Confirme no cartao do pedido apos enviar.",
       );
-      await api.swaps.markHREmailSent(request.id);
+      await api.swaps.markHREmailSent(request.id, userId);
       await loadData(true);
     } catch (err) {
       setError(getErrorMessage(err));
@@ -427,14 +474,103 @@ export function SwapsCalendarScreen({
   };
 
   const onApplySwap = async (request: SwapRequest) => {
+    const toShiftData = (shift: Shift): ShiftData => ({
+      id: shift.id,
+      shiftUid: shift.shiftUid ?? undefined,
+      week: 0,
+      date: new Date(shift.date),
+      startTime: new Date(shift.startsAt).toLocaleTimeString("pt-PT", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }),
+      endTime: new Date(shift.endsAt).toLocaleTimeString("pt-PT", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }),
+      shiftType: "other",
+      status: shift.status === "deleted" ? "deleted" : "active",
+      location: shift.location ?? undefined,
+      notes: shift.role ?? undefined,
+      googleEventId: shift.googleEventId ?? undefined,
+    });
+
     setError(null);
     setFeedback(null);
     try {
       await api.swaps.applySwap(request.id);
-      setFeedback("Troca marcada como aplicada.");
-      await loadData(true);
+
+      // Reload local data first so the in-app calendar reflects the applied swap.
+      await loadData(false);
+
+      if (accessToken && resolvedCalendarId) {
+        const latestOwnShifts = await api.shifts.getShiftsForUser(userId);
+        const ownShiftData = latestOwnShifts.map(toShiftData);
+
+        await api.calendar.runSync(ownShiftData, {
+          userId,
+          accessToken,
+          calendarId: resolvedCalendarId,
+          fullResync: false,
+          removeStaleEvents: true,
+        });
+
+        // Best effort: try syncing the counterpart user as well (works when
+        // the current token/calendar has access and policy allows reading shifts).
+        let counterpartSynced = false;
+        const counterpartUserId =
+          request.requesterUserId === userId
+            ? request.targetUserId
+            : request.requesterUserId;
+
+        try {
+          const counterpartShifts =
+            await api.shifts.getShiftsForUser(counterpartUserId);
+          if (counterpartShifts.length > 0) {
+            await api.calendar.runSync(counterpartShifts.map(toShiftData), {
+              userId: counterpartUserId,
+              accessToken,
+              calendarId: resolvedCalendarId,
+              fullResync: false,
+              removeStaleEvents: true,
+            });
+            counterpartSynced = true;
+          }
+        } catch {
+          counterpartSynced = false;
+        }
+
+        if (counterpartSynced) {
+          setFeedback(
+            "Troca aplicada e Google Calendar sincronizado para ambos os utilizadores.",
+          );
+          toast.success(
+            "Troca aplicada e Google Calendar atualizado para ambos.",
+          );
+        } else {
+          setFeedback(
+            "Troca aplicada e Google Calendar sincronizado para o utilizador atual. O outro utilizador deve sincronizar a propria conta.",
+          );
+          toast.success(
+            "Troca aplicada. Google Calendar do utilizador atual atualizado.",
+          );
+        }
+      } else {
+        setFeedback(
+          "Troca aplicada no sistema. Para Google Calendar, selecione um calendario e sincronize.",
+        );
+        toast.success("Troca aplicada no calendario interno.");
+      }
     } catch (err) {
-      setError(getErrorMessage(err));
+      const rawMessage = getErrorMessage(err);
+      const message = rawMessage.includes(
+        "shift ownership changed since approval",
+      )
+        ? "Falha ao aplicar troca: os turnos mudaram desde a aprovacao. Atualize os pedidos e tente novamente."
+        : rawMessage;
+      setError(message);
+      toast.error(`Falha ao atualizar calendario: ${message}`);
     }
   };
 
@@ -518,6 +654,7 @@ export function SwapsCalendarScreen({
           <SwapRequestList
             requests={swapRequests}
             currentUserId={userId}
+            hasGoogleSyncContext={Boolean(accessToken && resolvedCalendarId)}
             userDisplayNames={userDisplayNames}
             shiftById={requestShiftsById}
             onStatusChange={onStatusChange}

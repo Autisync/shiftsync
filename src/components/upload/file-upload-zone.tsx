@@ -29,6 +29,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getErrorMessage } from "@/lib/getErrorMessage";
+import {
+  ConstraintViolation,
+  validateScheduleConstraints,
+} from "@/features/swaps/services/swap-constraints";
 
 interface FileUploadZoneProps {
   onFileProcessed: (
@@ -62,6 +66,63 @@ export function FileUploadZone({
     null,
   );
   const [consentToShare, setConsentToShare] = useState(false);
+  const [constraintWarningsByEmployee, setConstraintWarningsByEmployee] =
+    useState<Record<string, ConstraintViolation[]>>({});
+  const [pendingEmployeeId, setPendingEmployeeId] = useState<string | null>(
+    null,
+  );
+
+  const toIsoDate = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const toIsoDateTime = (date: Date, time: string): Date => {
+    const [hours = "0", minutes = "0"] = time.split(":");
+    const dateTime = new Date(date);
+    dateTime.setHours(Number(hours), Number(minutes), 0, 0);
+    return dateTime;
+  };
+
+  const getConstraintWarnings = (shifts: ShiftData[]): ConstraintViolation[] => {
+    const scheduleShifts = shifts
+      .filter((shift) => Boolean(shift.startTime) && Boolean(shift.endTime))
+      .map((shift) => {
+        const startsAt = toIsoDateTime(shift.date, shift.startTime);
+        const endsAt = toIsoDateTime(shift.date, shift.endTime);
+        if (endsAt.getTime() <= startsAt.getTime()) {
+          endsAt.setDate(endsAt.getDate() + 1);
+        }
+
+        return {
+          date: toIsoDate(shift.date),
+          startsAt: startsAt.toISOString(),
+          endsAt: endsAt.toISOString(),
+        };
+      });
+
+    return validateScheduleConstraints(scheduleShifts).violations;
+  };
+
+  const proceedWithEmployee = (employeeId: string) => {
+    if (!parsedResult || !file) {
+      return;
+    }
+
+    const employee = parsedResult.employees.find((e) => e.employeeId === employeeId);
+    if (!employee) {
+      return;
+    }
+
+    setPendingEmployeeId(null);
+    onFileProcessed(employee.shifts, employee.employeeName, {
+      sourceFile: file,
+      parsedResult,
+      consentToShare,
+    });
+  };
 
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
@@ -105,6 +166,8 @@ export function FileUploadZone({
     setSuccess(false);
     setParsedResult(null);
     setSelectedEmployeeId(null);
+    setConstraintWarningsByEmployee({});
+    setPendingEmployeeId(null);
 
     // Validate file
     const validation = validateExcelFile(selectedFile);
@@ -137,17 +200,29 @@ export function FileUploadZone({
       setSuccess(true);
       setParsedResult(result);
 
+      const nextWarningsByEmployee = Object.fromEntries(
+        result.employees.map((employee) => [
+          employee.employeeId,
+          getConstraintWarnings(employee.shifts),
+        ]),
+      );
+      setConstraintWarningsByEmployee(nextWarningsByEmployee);
+
       // If only one employee, auto-select and proceed
       if (result.employees.length === 1) {
         const employee = result.employees[0];
         setSelectedEmployeeId(employee.employeeId);
-        setTimeout(() => {
-          onFileProcessed(employee.shifts, employee.employeeName, {
-            sourceFile: selectedFile,
-            parsedResult: result,
-            consentToShare,
-          });
-        }, 500);
+        if ((nextWarningsByEmployee[employee.employeeId] ?? []).length > 0) {
+          setPendingEmployeeId(employee.employeeId);
+        } else {
+          setTimeout(() => {
+            onFileProcessed(employee.shifts, employee.employeeName, {
+              sourceFile: selectedFile,
+              parsedResult: result,
+              consentToShare,
+            });
+          }, 500);
+        }
       }
       // Otherwise, wait for employee selection
     } catch (err) {
@@ -161,21 +236,14 @@ export function FileUploadZone({
   const handleEmployeeSelect = (employeeId: string) => {
     setSelectedEmployeeId(employeeId);
 
-    if (parsedResult) {
-      const employee = parsedResult.employees.find(
-        (e) => e.employeeId === employeeId,
-      );
-      if (employee) {
-        if (!file) {
-          return;
-        }
-        onFileProcessed(employee.shifts, employee.employeeName, {
-          sourceFile: file,
-          parsedResult,
-          consentToShare,
-        });
-      }
+    const warnings = constraintWarningsByEmployee[employeeId] ?? [];
+    if (warnings.length > 0) {
+      setPendingEmployeeId(employeeId);
+      return;
     }
+    setPendingEmployeeId(null);
+
+    proceedWithEmployee(employeeId);
   };
 
   const handleRemoveFile = () => {
@@ -186,11 +254,16 @@ export function FileUploadZone({
     setParsedResult(null);
     setSelectedEmployeeId(null);
     setConsentToShare(false);
+    setConstraintWarningsByEmployee({});
+    setPendingEmployeeId(null);
   };
 
   // Show employee selector if multiple employees found
   const showEmployeeSelector =
     parsedResult && parsedResult.employees.length > 1 && !selectedEmployeeId;
+  const pendingWarnings = pendingEmployeeId
+    ? constraintWarningsByEmployee[pendingEmployeeId] ?? []
+    : [];
 
   return (
     <Card className="border-0 shadow-lg">
@@ -376,6 +449,30 @@ export function FileUploadZone({
                   </SelectContent>
                 </Select>
               </div>
+            )}
+
+            {pendingEmployeeId && pendingWarnings.length > 0 && (
+              <Alert>
+                <AlertCircle className="w-4 h-4" />
+                <AlertDescription className="space-y-3 text-xs sm:text-sm">
+                  <p>
+                    Detetamos possiveis violacoes das regras 6/60 neste horario.
+                    Reveja antes de continuar:
+                  </p>
+                  <ul className="list-disc pl-5 space-y-1">
+                    {pendingWarnings.map((violation, index) => (
+                      <li key={`${violation.code}-${index}`}>{violation.message}</li>
+                    ))}
+                  </ul>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => proceedWithEmployee(pendingEmployeeId)}
+                  >
+                    Continuar mesmo assim
+                  </Button>
+                </AlertDescription>
+              </Alert>
             )}
 
             <Button

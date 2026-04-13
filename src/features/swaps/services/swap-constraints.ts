@@ -9,6 +9,12 @@
 
 import type { Shift } from "@/types/domain";
 
+export interface ConstraintShift {
+  date: string;
+  startsAt: string;
+  endsAt: string;
+}
+
 export interface ConstraintViolation {
   code: string;
   message: string;
@@ -18,6 +24,11 @@ export interface ConstraintViolation {
 export interface ValidationResult {
   valid: boolean;
   violations: ConstraintViolation[];
+}
+
+export interface ScheduleValidationOptions {
+  enforceMinRestHours?: boolean;
+  minRestHours?: number;
 }
 
 function getWeekBounds(date: string): { start: Date; end: Date } {
@@ -80,6 +91,163 @@ function getConsecutiveDays(shifts: Shift[], upToDate: string): number {
   return maxConsecutive;
 }
 
+function getDateOnly(value: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+  return new Date(value).toISOString().slice(0, 10);
+}
+
+function getMaxConsecutiveWorkedDays(shifts: ConstraintShift[]): number {
+  const uniqueDates = Array.from(new Set(shifts.map((shift) => shift.date)))
+    .map((date) => new Date(`${date}T00:00:00.000Z`).getTime())
+    .sort((a, b) => a - b);
+
+  if (uniqueDates.length === 0) {
+    return 0;
+  }
+
+  let maxConsecutive = 1;
+  let currentConsecutive = 1;
+
+  for (let i = 1; i < uniqueDates.length; i++) {
+    const diffDays = (uniqueDates[i] - uniqueDates[i - 1]) / (1000 * 60 * 60 * 24);
+    if (diffDays === 1) {
+      currentConsecutive += 1;
+      maxConsecutive = Math.max(maxConsecutive, currentConsecutive);
+    } else {
+      currentConsecutive = 1;
+    }
+  }
+
+  return maxConsecutive;
+}
+
+function getWeekStart(dateIso: string): string {
+  const date = new Date(`${dateIso}T00:00:00.000Z`);
+  const day = date.getUTCDay();
+  const weekStart = new Date(date);
+  weekStart.setUTCDate(date.getUTCDate() - day);
+  return weekStart.toISOString().slice(0, 10);
+}
+
+function getHoursForWeek(shifts: ConstraintShift[], weekStartIso: string): number {
+  const weekStart = new Date(`${weekStartIso}T00:00:00.000Z`);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setUTCDate(weekStart.getUTCDate() + 7);
+
+  return shifts.reduce((total, shift) => {
+    const start = new Date(shift.startsAt).getTime();
+    const end = new Date(shift.endsAt).getTime();
+
+    if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
+      return total;
+    }
+
+    const overlapStart = Math.max(start, weekStart.getTime());
+    const overlapEnd = Math.min(end, weekEnd.getTime());
+
+    if (overlapEnd <= overlapStart) {
+      return total;
+    }
+
+    return total + (overlapEnd - overlapStart) / (1000 * 60 * 60);
+  }, 0);
+}
+
+function findRestViolations(
+  shifts: ConstraintShift[],
+  minRestHours: number,
+): Array<{ previousEndsAt: string; nextStartsAt: string; restHours: number }> {
+  const sorted = [...shifts].sort(
+    (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+  );
+  const issues: Array<{ previousEndsAt: string; nextStartsAt: string; restHours: number }> = [];
+
+  for (let i = 1; i < sorted.length; i++) {
+    const prevEnd = new Date(sorted[i - 1].endsAt).getTime();
+    const nextStart = new Date(sorted[i].startsAt).getTime();
+    if (Number.isNaN(prevEnd) || Number.isNaN(nextStart)) {
+      continue;
+    }
+
+    const gapHours = (nextStart - prevEnd) / (1000 * 60 * 60);
+    if (gapHours < minRestHours) {
+      issues.push({
+        previousEndsAt: sorted[i - 1].endsAt,
+        nextStartsAt: sorted[i].startsAt,
+        restHours: gapHours,
+      });
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * Pure schedule validator used by upload/parser warnings and swap validations.
+ * No side effects, no database writes.
+ */
+export function validateScheduleConstraints(
+  shifts: ConstraintShift[],
+  options: ScheduleValidationOptions = {},
+): ValidationResult {
+  const violations: ConstraintViolation[] = [];
+  const normalized = shifts
+    .map((shift) => ({
+      date: getDateOnly(shift.date),
+      startsAt: shift.startsAt,
+      endsAt: shift.endsAt,
+    }))
+    .filter((shift) => !Number.isNaN(new Date(shift.startsAt).getTime()));
+
+  const weekStarts = Array.from(new Set(normalized.map((shift) => getWeekStart(shift.date))));
+  for (const weekStart of weekStarts) {
+    const hours = getHoursForWeek(normalized, weekStart);
+    if (hours > 60) {
+      violations.push({
+        code: "MAX_HOURS_EXCEEDED",
+        message: `Regra 6/60 violada: ${hours.toFixed(1)}h na semana de ${weekStart}.`,
+        details: {
+          hours,
+          weekStart,
+        },
+      });
+    }
+  }
+
+  const maxConsecutiveDays = getMaxConsecutiveWorkedDays(normalized);
+  if (maxConsecutiveDays > 6) {
+    violations.push({
+      code: "MAX_CONSECUTIVE_DAYS_EXCEEDED",
+      message: `Regra 6/60 violada: ${maxConsecutiveDays} dias consecutivos trabalhados.`,
+      details: {
+        consecutiveDays: maxConsecutiveDays,
+      },
+    });
+  }
+
+  if (options.enforceMinRestHours) {
+    const minRestHours = options.minRestHours ?? 11;
+    const restViolations = findRestViolations(normalized, minRestHours);
+    if (restViolations.length > 0) {
+      violations.push({
+        code: "MIN_REST_HOURS_VIOLATED",
+        message: `Descanso minimo violado: ${restViolations.length} transicao(oes) com menos de ${minRestHours}h.`,
+        details: {
+          minRestHours,
+          transitions: restViolations,
+        },
+      });
+    }
+  }
+
+  return {
+    valid: violations.length === 0,
+    violations,
+  };
+}
+
 /**
  * Validate swap constraints after accepting a swap.
  * Checks if either user would violate rules when the swap is applied.
@@ -109,7 +277,8 @@ export function validateSwapConstraints(input: {
   if (!requesterOwnShift) {
     violations.push({
       code: "SHIFT_NOT_FOUND",
-      message: "Requester shift not found",
+      message:
+        "Troca nao possivel devido a regra 6/60 (turno do requisitante nao encontrado).",
       details: { shiftId: input.ownShiftId },
     });
     return { valid: false, violations };
@@ -128,7 +297,7 @@ export function validateSwapConstraints(input: {
     if (hoursInWeek > 60) {
       violations.push({
         code: "MAX_HOURS_EXCEEDED_REQUESTER",
-        message: `Requester would exceed 60 hours/week (${hoursInWeek.toFixed(1)} hours)`,
+        message: `Troca nao possivel devido a regra 6/60: o requisitante excederia 60 horas por semana (${hoursInWeek.toFixed(1)}h).`,
         details: {
           hours: hoursInWeek,
           userId: input.requesterShifts[0].userId,
@@ -143,7 +312,7 @@ export function validateSwapConstraints(input: {
     if (consecutiveDays > 6) {
       violations.push({
         code: "MAX_CONSECUTIVE_DAYS_EXCEEDED_REQUESTER",
-        message: `Requester would exceed 6 consecutive days (${consecutiveDays} days)`,
+        message: `Troca nao possivel devido a regra 6/60: o requisitante excederia 6 dias consecutivos (${consecutiveDays} dias).`,
         details: {
           consecutiveDays,
           userId: input.requesterShifts[0].userId,
@@ -166,7 +335,7 @@ export function validateSwapConstraints(input: {
     if (hoursInWeek > 60) {
       violations.push({
         code: "MAX_HOURS_EXCEEDED_TARGET",
-        message: `Target would exceed 60 hours/week (${hoursInWeek.toFixed(1)} hours)`,
+        message: `Troca nao possivel devido a regra 6/60: o colega excederia 60 horas por semana (${hoursInWeek.toFixed(1)}h).`,
         details: { hours: hoursInWeek, userId: targetIncomingShift.userId },
       });
     }
@@ -178,7 +347,7 @@ export function validateSwapConstraints(input: {
     if (consecutiveDays > 6) {
       violations.push({
         code: "MAX_CONSECUTIVE_DAYS_EXCEEDED_TARGET",
-        message: `Target would exceed 6 consecutive days (${consecutiveDays} days)`,
+        message: `Troca nao possivel devido a regra 6/60: o colega excederia 6 dias consecutivos (${consecutiveDays} dias).`,
         details: {
           consecutiveDays,
           userId: targetIncomingShift.userId,

@@ -1,11 +1,14 @@
 import type { SwapRequest, SwapRequestStatus } from "@/types/domain";
 
 const ALLOWED_TRANSITIONS: Record<SwapRequestStatus, SwapRequestStatus[]> = {
-  pending: ["accepted", "rejected"],
-  accepted: ["submitted_to_hr"],
+  pending: ["accepted", "awaiting_hr_request", "rejected"],
+  accepted: ["submitted_to_hr", "awaiting_hr_request", "rejected"],
+  submitted_to_hr: ["approved", "ready_to_apply", "rejected"],
+  approved: ["applied"],
+  awaiting_hr_request: ["ready_to_apply", "rejected"],
   rejected: [],
-  submitted_to_hr: ["approved"],
-  approved: [],
+  ready_to_apply: ["approved", "applied"],
+  applied: [],
 };
 
 export function canSwapStatusTransition(
@@ -30,11 +33,17 @@ export function getSwapStatusBadgeClass(status: SwapRequestStatus): string {
       return "bg-amber-50 text-amber-700 border-amber-200";
     case "accepted":
       return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    case "submitted_to_hr":
+      return "bg-cyan-50 text-cyan-700 border-cyan-200";
+    case "approved":
+      return "bg-sky-50 text-sky-700 border-sky-200";
+    case "awaiting_hr_request":
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
     case "rejected":
       return "bg-rose-50 text-rose-700 border-rose-200";
-    case "submitted_to_hr":
+    case "ready_to_apply":
       return "bg-sky-50 text-sky-700 border-sky-200";
-    case "approved":
+    case "applied":
       return "bg-indigo-50 text-indigo-700 border-indigo-200";
     default:
       return "bg-slate-50 text-slate-700 border-slate-200";
@@ -47,12 +56,18 @@ export function formatSwapStatus(status: SwapRequestStatus): string {
       return "Pendente";
     case "accepted":
       return "Aceite";
-    case "rejected":
-      return "Rejeitado";
     case "submitted_to_hr":
       return "Submetido ao RH";
     case "approved":
       return "Aprovado";
+    case "awaiting_hr_request":
+      return "Aguardando RH";
+    case "rejected":
+      return "Rejeitado";
+    case "ready_to_apply":
+      return "Pronto para aplicar";
+    case "applied":
+      return "Aplicado";
     default:
       return status;
   }
@@ -63,18 +78,21 @@ export function getAllowedActionsForUser(
   userId: string,
 ): SwapRequestStatus[] {
   if (request.status === "pending" && request.targetUserId === userId) {
-    return ["accepted", "rejected"];
-  }
-
-  if (request.status === "accepted" && request.requesterUserId === userId) {
-    return ["submitted_to_hr"];
+    return ["awaiting_hr_request", "rejected"];
   }
 
   if (
-    request.status === "submitted_to_hr" &&
+    request.status === "awaiting_hr_request" &&
     request.requesterUserId === userId
   ) {
-    return ["approved"];
+    return ["ready_to_apply"];
+  }
+
+  if (
+    request.status === "ready_to_apply" &&
+    request.requesterUserId === userId
+  ) {
+    return ["applied"];
   }
 
   return [];
@@ -82,14 +100,20 @@ export function getAllowedActionsForUser(
 
 export function getActionLabel(status: SwapRequestStatus): string {
   switch (status) {
+    case "awaiting_hr_request":
+      return "Aceitar";
     case "accepted":
       return "Aceitar";
+    case "submitted_to_hr":
+      return "Enviar para RH";
+    case "approved":
+      return "Marcar como aprovado";
     case "rejected":
       return "Rejeitar";
-    case "submitted_to_hr":
-      return "Submeter ao RH";
-    case "approved":
-      return "Marcar como Aprovado";
+    case "ready_to_apply":
+      return "Marcar pronto para aplicar";
+    case "applied":
+      return "Marcar como aplicado";
     default:
       return formatSwapStatus(status);
   }

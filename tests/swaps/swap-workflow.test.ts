@@ -28,6 +28,15 @@ function makeRequest(overrides: Partial<SwapRequest> = {}): SwapRequest {
     rejectedAt: null,
     submittedToHrAt: null,
     approvedAt: null,
+    requesterHrSent: false,
+    targetHrSent: false,
+    requesterHrApproved: false,
+    targetHrApproved: false,
+    calendarUpdateEnabled: false,
+    ruleViolation: null,
+    violationReason: null,
+    hrEmailSent: false,
+    calendarApplied: false,
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -55,19 +64,14 @@ describe("swap workflow transitions", () => {
   it("returns role-appropriate actions for requester and target inboxes", () => {
     const pending = makeRequest({ status: "pending" });
     expect(getAllowedActionsForUser(pending, "u-target")).toEqual([
-      "accepted",
+      "awaiting_hr_request",
       "rejected",
     ]);
     expect(getAllowedActionsForUser(pending, "u-requester")).toEqual([]);
 
-    const accepted = makeRequest({ status: "accepted" });
-    expect(getAllowedActionsForUser(accepted, "u-requester")).toEqual([
-      "submitted_to_hr",
-    ]);
-
-    const submitted = makeRequest({ status: "submitted_to_hr" });
-    expect(getAllowedActionsForUser(submitted, "u-requester")).toEqual([
-      "approved",
+    const awaiting = makeRequest({ status: "awaiting_hr_request" });
+    expect(getAllowedActionsForUser(awaiting, "u-requester")).toEqual([
+      "ready_to_apply",
     ]);
   });
 });

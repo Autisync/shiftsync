@@ -6,6 +6,7 @@ import { SwapRequestCard } from "@/components/swaps/SwapRequestCard";
 interface SwapRequestListProps {
   requests: SwapRequest[];
   currentUserId: string;
+  hasGoogleSyncContext?: boolean;
   userDisplayNames?: Record<string, string>;
   shiftById?: Record<string, Shift>;
   onStatusChange: (request: SwapRequest, status: SwapRequestStatus) => void;
@@ -16,6 +17,7 @@ interface SwapRequestListProps {
 export function SwapRequestList({
   requests,
   currentUserId,
+  hasGoogleSyncContext,
   userDisplayNames,
   shiftById,
   onStatusChange,
@@ -29,7 +31,7 @@ export function SwapRequestList({
       pendentes: requests.filter((r) => r.status === "pending"),
       enviados: requests.filter((r) => r.requesterUserId === currentUserId),
       recebidos: requests.filter((r) => r.targetUserId === currentUserId),
-      aprovados: requests.filter((r) => r.status === "approved"),
+      aprovados: requests.filter((r) => r.status === "ready_to_apply"),
       rejeitados: requests.filter((r) => r.status === "rejected"),
       todos: requests,
     }),
@@ -48,6 +50,7 @@ export function SwapRequestList({
             key={request.id}
             request={request}
             currentUserId={currentUserId}
+            hasGoogleSyncContext={hasGoogleSyncContext}
             userDisplayNames={userDisplayNames}
             shiftById={shiftById}
             onStatusChange={onStatusChange}

@@ -134,6 +134,41 @@ export interface Database {
           uploader_user_id?: string;
         };
       };
+      hr_settings: {
+        Row: {
+          id: string;
+          user_id: string;
+          hr_email: string;
+          cc_emails: string[];
+          selected_calendar_id: string | null;
+          selected_calendar_name: string | null;
+          last_synced_calendar_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          hr_email: string;
+          cc_emails?: string[];
+          selected_calendar_id?: string | null;
+          selected_calendar_name?: string | null;
+          last_synced_calendar_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          hr_email?: string;
+          cc_emails?: string[];
+          selected_calendar_id?: string | null;
+          selected_calendar_name?: string | null;
+          last_synced_calendar_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
       shifts: {
         Row: {
           created_at: string;
@@ -211,68 +246,104 @@ export interface Database {
         Row: {
           accepted_at: string | null;
           approved_at: string | null;
+          calendar_applied: boolean;
+          calendar_update_enabled: boolean;
           created_at: string;
+          hr_email_sent: boolean;
           id: string;
           message: string | null;
           pending_at: string | null;
           rejected_at: string | null;
+          requester_hr_approved: boolean;
+          requester_hr_sent: boolean;
           requester_shift_id: string;
           requester_user_id: string;
+          rule_violation: string | null;
           status_history: Json;
           status:
             | "pending"
             | "accepted"
             | "rejected"
             | "submitted_to_hr"
-            | "approved";
+            | "approved"
+            | "awaiting_hr_request"
+            | "ready_to_apply"
+            | "applied";
           submitted_to_hr_at: string | null;
+          target_hr_approved: boolean;
+          target_hr_sent: boolean;
           target_shift_id: string | null;
           target_user_id: string;
           updated_at: string;
+          violation_reason: string | null;
         };
         Insert: {
           accepted_at?: string | null;
           approved_at?: string | null;
+          calendar_applied?: boolean;
+          calendar_update_enabled?: boolean;
           created_at?: string;
+          hr_email_sent?: boolean;
           id?: string;
           message?: string | null;
           pending_at?: string | null;
           rejected_at?: string | null;
+          requester_hr_approved?: boolean;
+          requester_hr_sent?: boolean;
           requester_shift_id: string;
           requester_user_id: string;
+          rule_violation?: string | null;
           status_history?: Json;
           status?:
             | "pending"
             | "accepted"
             | "rejected"
             | "submitted_to_hr"
-            | "approved";
+            | "approved"
+            | "awaiting_hr_request"
+            | "ready_to_apply"
+            | "applied";
           submitted_to_hr_at?: string | null;
+          target_hr_approved?: boolean;
+          target_hr_sent?: boolean;
           target_shift_id?: string | null;
           target_user_id: string;
           updated_at?: string;
+          violation_reason?: string | null;
         };
         Update: {
           accepted_at?: string | null;
           approved_at?: string | null;
+          calendar_applied?: boolean;
+          calendar_update_enabled?: boolean;
           created_at?: string;
+          hr_email_sent?: boolean;
           id?: string;
           message?: string | null;
           pending_at?: string | null;
           rejected_at?: string | null;
+          requester_hr_approved?: boolean;
+          requester_hr_sent?: boolean;
           requester_shift_id?: string;
           requester_user_id?: string;
+          rule_violation?: string | null;
           status_history?: Json;
           status?:
             | "pending"
             | "accepted"
             | "rejected"
             | "submitted_to_hr"
-            | "approved";
+            | "approved"
+            | "awaiting_hr_request"
+            | "ready_to_apply"
+            | "applied";
           submitted_to_hr_at?: string | null;
+          target_hr_approved?: boolean;
+          target_hr_sent?: boolean;
           target_shift_id?: string | null;
           target_user_id?: string;
           updated_at?: string;
+          violation_reason?: string | null;
         };
       };
       users: {
@@ -301,6 +372,32 @@ export interface Database {
           updated_at?: string;
         };
       };
+      user_calendar_preferences: {
+        Row: {
+          id: string;
+          user_id: string;
+          calendar_id: string;
+          calendar_name: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          calendar_id: string;
+          calendar_name?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          calendar_id?: string;
+          calendar_name?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
@@ -312,7 +409,10 @@ export interface Database {
         | "accepted"
         | "rejected"
         | "submitted_to_hr"
-        | "approved";
+        | "approved"
+        | "awaiting_hr_request"
+        | "ready_to_apply"
+        | "applied";
     };
     CompositeTypes: Record<string, never>;
   };
