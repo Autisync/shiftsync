@@ -19,6 +19,21 @@ import type {
   AccessRequestStatus,
   HRSettings,
 } from "@/types/domain";
+
+// ── Notification payloads ──────────────────────────────────────────────────
+
+export interface LeaveNotificationPayload {
+  leaveRequestId: string;
+  userId: string;
+  status: LeaveRequestStatus;
+  /** Effective start date (approved if set, otherwise requested). */
+  startDate: string;
+  /** Effective end date (approved if set, otherwise requested). */
+  endDate: string;
+  type: string;
+  notes: string | null;
+  updatedAt: string;
+}
 import type { ShiftData } from "@/types/shift";
 
 // ── AuthService ────────────────────────────────────────────────────────────
@@ -144,11 +159,96 @@ export interface SwapService {
 
 // ── LeaveService ───────────────────────────────────────────────────────────
 
+export interface LeaveApproveInput {
+  /** HR-confirmed start date. Defaults to requested dates if omitted. */
+  approvedStartDate?: string;
+  /** HR-confirmed end date. Defaults to requested dates if omitted. */
+  approvedEndDate?: string;
+  approvedNotes?: string;
+  hrResponseNotes?: string;
+}
+
+export interface LeaveRejectInput {
+  hrResponseNotes?: string;
+}
+
+export interface LeaveSendToHRInput {
+  /** pre-computed mailto URL string returned to the caller */
+  mailtoUrl: string;
+}
+
+export interface LeaveSyncResult {
+  created: number;
+  updated: number;
+  googleEventId: string;
+  leaveUid: string;
+  calendarId: string;
+}
+
 export interface LeaveService {
+  /** Creates a leave request as a draft (status = draft). */
   createLeaveRequest(
-    data: Omit<LeaveRequest, "id" | "status" | "createdAt" | "updatedAt">,
+    data: Omit<
+      LeaveRequest,
+      | "id"
+      | "status"
+      | "createdAt"
+      | "updatedAt"
+      | "sentToHrAt"
+      | "decisionDueAt"
+      | "approvedStartDate"
+      | "approvedEndDate"
+      | "approvedNotes"
+      | "hrResponseNotes"
+      | "softDeclinedAt"
+      | "calendarAppliedAt"
+      | "googleEventId"
+      | "leaveUid"
+      | "lastSyncedCalendarId"
+    >,
   ): Promise<LeaveRequest>;
+
   getLeaveRequestsForUser(userId: string): Promise<LeaveRequest[]>;
+
+  /** Transitions status → pending and records sent_to_hr_at / decision_due_at. */
+  markSentToHR(id: string): Promise<LeaveRequest>;
+
+  /** Transitions pending → approved. Stores approved dates (defaults to requested). */
+  approveLeaveRequest(
+    id: string,
+    input?: LeaveApproveInput,
+  ): Promise<LeaveRequest>;
+
+  /** Transitions pending → rejected. */
+  rejectLeaveRequest(
+    id: string,
+    input?: LeaveRejectInput,
+  ): Promise<LeaveRequest>;
+
+  /**
+   * Updates approved start/end dates on an already-approved férias request.
+   * Does NOT change status. Used before calendar sync.
+   */
+  updateApprovedDates(
+    id: string,
+    approvedStartDate: string,
+    approvedEndDate: string,
+  ): Promise<LeaveRequest>;
+
+  /**
+   * Records a successful calendar sync (google_event_id, leave_uid,
+   * last_synced_calendar_id, calendar_applied_at).
+   */
+  recordCalendarSync(
+    id: string,
+    syncData: {
+      googleEventId: string;
+      leaveUid: string;
+      calendarId: string;
+    },
+  ): Promise<LeaveRequest>;
+
+  /** @deprecated — use approveLeaveRequest / rejectLeaveRequest instead. */
   updateLeaveStatus(
     id: string,
     status: LeaveRequestStatus,
@@ -226,6 +326,8 @@ export interface CalendarSyncService {
 
 export interface NotificationService {
   notifyHR(subject: string, body: string): Promise<void>;
+  /** Dispatched after a leave request status changes (pending→approved/rejected). */
+  notifyLeaveStatusChange(payload: LeaveNotificationPayload): Promise<void>;
 }
 
 // ── Aggregated provider contract ───────────────────────────────────────────

@@ -40,37 +40,85 @@ export interface Database {
       };
       leave_requests: {
         Row: {
-          created_at: string;
-          end_date: string;
           id: string;
-          notes: string | null;
-          start_date: string;
-          status: "pending" | "approved" | "rejected";
-          type: string;
-          updated_at: string;
           user_id: string;
+          type: string;
+          requested_start_date: string;
+          requested_end_date: string;
+          requested_notes: string | null;
+          status:
+            | "draft"
+            | "pending"
+            | "approved"
+            | "rejected"
+            | "soft_declined";
+          sent_to_hr_at: string | null;
+          decision_due_at: string | null;
+          approved_start_date: string | null;
+          approved_end_date: string | null;
+          approved_notes: string | null;
+          hr_response_notes: string | null;
+          soft_declined_at: string | null;
+          calendar_applied_at: string | null;
+          google_event_id: string | null;
+          leave_uid: string | null;
+          last_synced_calendar_id: string | null;
+          created_at: string;
+          updated_at: string;
         };
         Insert: {
-          created_at?: string;
-          end_date: string;
           id?: string;
-          notes?: string | null;
-          start_date: string;
-          status?: "pending" | "approved" | "rejected";
-          type: string;
-          updated_at?: string;
           user_id: string;
+          type: string;
+          requested_start_date: string;
+          requested_end_date: string;
+          requested_notes?: string | null;
+          status?:
+            | "draft"
+            | "pending"
+            | "approved"
+            | "rejected"
+            | "soft_declined";
+          sent_to_hr_at?: string | null;
+          decision_due_at?: string | null;
+          approved_start_date?: string | null;
+          approved_end_date?: string | null;
+          approved_notes?: string | null;
+          hr_response_notes?: string | null;
+          soft_declined_at?: string | null;
+          calendar_applied_at?: string | null;
+          google_event_id?: string | null;
+          leave_uid?: string | null;
+          last_synced_calendar_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
         };
         Update: {
-          created_at?: string;
-          end_date?: string;
           id?: string;
-          notes?: string | null;
-          start_date?: string;
-          status?: "pending" | "approved" | "rejected";
-          type?: string;
-          updated_at?: string;
           user_id?: string;
+          type?: string;
+          requested_start_date?: string;
+          requested_end_date?: string;
+          requested_notes?: string | null;
+          status?:
+            | "draft"
+            | "pending"
+            | "approved"
+            | "rejected"
+            | "soft_declined";
+          sent_to_hr_at?: string | null;
+          decision_due_at?: string | null;
+          approved_start_date?: string | null;
+          approved_end_date?: string | null;
+          approved_notes?: string | null;
+          hr_response_notes?: string | null;
+          soft_declined_at?: string | null;
+          calendar_applied_at?: string | null;
+          google_event_id?: string | null;
+          leave_uid?: string | null;
+          last_synced_calendar_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
         };
       };
       schedule_access_requests: {

@@ -18,6 +18,7 @@ import type {
   LeaveService,
   CalendarSyncService,
   NotificationService,
+  LeaveNotificationPayload,
 } from "./types";
 import type {
   AuthSession,
@@ -1377,7 +1378,24 @@ const supabaseSwaps: SwapService = {
 
 const supabaseLeave: LeaveService = {
   async createLeaveRequest(
-    input: Omit<LeaveRequest, "id" | "status" | "createdAt" | "updatedAt">,
+    input: Omit<
+      LeaveRequest,
+      | "id"
+      | "status"
+      | "createdAt"
+      | "updatedAt"
+      | "sentToHrAt"
+      | "decisionDueAt"
+      | "approvedStartDate"
+      | "approvedEndDate"
+      | "approvedNotes"
+      | "hrResponseNotes"
+      | "softDeclinedAt"
+      | "calendarAppliedAt"
+      | "googleEventId"
+      | "leaveUid"
+      | "lastSyncedCalendarId"
+    >,
   ): Promise<LeaveRequest> {
     const supabase = getSupabaseClient();
     if (!supabase) throw new Error("Supabase client unavailable");
@@ -1385,11 +1403,11 @@ const supabaseLeave: LeaveService = {
       .from("leave_requests")
       .insert({
         user_id: input.userId,
-        start_date: input.startDate,
-        end_date: input.endDate,
         type: input.type,
-        notes: input.notes,
-        status: "pending",
+        requested_start_date: input.startDate,
+        requested_end_date: input.endDate,
+        requested_notes: input.notes,
+        status: "draft",
       })
       .select()
       .single();
@@ -1403,11 +1421,123 @@ const supabaseLeave: LeaveService = {
       .from("leave_requests")
       .select("*")
       .eq("user_id", userId)
-      .order("start_date", { ascending: false });
+      .order("requested_start_date", { ascending: false });
     if (error) throw error;
     return (data ?? []).map(toLeaveRequest);
   },
 
+  async markSentToHR(id: string): Promise<LeaveRequest> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+    const now = new Date().toISOString();
+    const dueAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from("leave_requests")
+      .update({
+        status: "pending",
+        sent_to_hr_at: now,
+        decision_due_at: dueAt,
+      })
+      .eq("id", id)
+      .select()
+      .single();
+    return toLeaveRequest(assertNoError({ data, error }));
+  },
+
+  async approveLeaveRequest(
+    id: string,
+    input?: {
+      approvedStartDate?: string;
+      approvedEndDate?: string;
+      approvedNotes?: string;
+      hrResponseNotes?: string;
+    },
+  ): Promise<LeaveRequest> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    // Fetch current row to default approved dates to requested dates
+    const { data: current, error: fetchError } = await supabase
+      .from("leave_requests")
+      .select("requested_start_date, requested_end_date")
+      .eq("id", id)
+      .single();
+    if (fetchError) throw fetchError;
+
+    const { data, error } = await supabase
+      .from("leave_requests")
+      .update({
+        status: "approved",
+        approved_start_date:
+          input?.approvedStartDate ?? current.requested_start_date,
+        approved_end_date: input?.approvedEndDate ?? current.requested_end_date,
+        approved_notes: input?.approvedNotes ?? null,
+        hr_response_notes: input?.hrResponseNotes ?? null,
+      })
+      .eq("id", id)
+      .select()
+      .single();
+    return toLeaveRequest(assertNoError({ data, error }));
+  },
+
+  async rejectLeaveRequest(
+    id: string,
+    input?: { hrResponseNotes?: string },
+  ): Promise<LeaveRequest> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+    const { data, error } = await supabase
+      .from("leave_requests")
+      .update({
+        status: "rejected",
+        hr_response_notes: input?.hrResponseNotes ?? null,
+      })
+      .eq("id", id)
+      .select()
+      .single();
+    return toLeaveRequest(assertNoError({ data, error }));
+  },
+
+  async updateApprovedDates(
+    id: string,
+    approvedStartDate: string,
+    approvedEndDate: string,
+  ): Promise<LeaveRequest> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+    const { data, error } = await supabase
+      .from("leave_requests")
+      .update({
+        approved_start_date: approvedStartDate,
+        approved_end_date: approvedEndDate,
+      })
+      .eq("id", id)
+      .select()
+      .single();
+    return toLeaveRequest(assertNoError({ data, error }));
+  },
+
+  async recordCalendarSync(
+    id: string,
+    syncData: { googleEventId: string; leaveUid: string; calendarId: string },
+  ): Promise<LeaveRequest> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+    const { data, error } = await supabase
+      .from("leave_requests")
+      .update({
+        google_event_id: syncData.googleEventId,
+        leave_uid: syncData.leaveUid,
+        last_synced_calendar_id: syncData.calendarId,
+        calendar_applied_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .select()
+      .single();
+    return toLeaveRequest(assertNoError({ data, error }));
+  },
+
+  /** @deprecated — retained for backward-compatibility; prefer typed methods above. */
   async updateLeaveStatus(
     id: string,
     status: LeaveRequestStatus,
@@ -1656,6 +1786,16 @@ const supabaseNotifications: NotificationService = {
   async notifyHR(_subject: string, _body: string): Promise<void> {
     // Stub: will be wired to Supabase Edge Function or email trigger in Phase 7.
     console.info("[NotificationService] notifyHR called (stub)");
+  },
+
+  async notifyLeaveStatusChange(
+    payload: LeaveNotificationPayload,
+  ): Promise<void> {
+    // Stub: structured payload ready for Supabase Edge Function invocation.
+    // When a `notify-leave-status` Edge Function is deployed, replace with:
+    //   const supabase = getSupabaseClient();
+    //   await supabase?.functions.invoke("notify-leave-status", { body: payload });
+    console.info("[NotificationService] notifyLeaveStatusChange", payload);
   },
 };
 

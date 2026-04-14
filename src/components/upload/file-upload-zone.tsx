@@ -56,6 +56,7 @@ export function FileUploadZone({
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   // Employee selection state
@@ -71,6 +72,9 @@ export function FileUploadZone({
   const [pendingEmployeeId, setPendingEmployeeId] = useState<string | null>(
     null,
   );
+
+  const isValidDate = (value: unknown): value is Date =>
+    value instanceof Date && !Number.isNaN(value.getTime());
 
   const toIsoDate = (date: Date): string => {
     const year = date.getFullYear();
@@ -90,10 +94,21 @@ export function FileUploadZone({
     shifts: ShiftData[],
   ): ConstraintViolation[] => {
     const scheduleShifts = shifts
-      .filter((shift) => Boolean(shift.startTime) && Boolean(shift.endTime))
+      .filter(
+        (shift) =>
+          isValidDate(shift.date) &&
+          Boolean(shift.startTime) &&
+          Boolean(shift.endTime),
+      )
       .map((shift) => {
         const startsAt = toIsoDateTime(shift.date, shift.startTime);
         const endsAt = toIsoDateTime(shift.date, shift.endTime);
+        if (
+          Number.isNaN(startsAt.getTime()) ||
+          Number.isNaN(endsAt.getTime())
+        ) {
+          return null;
+        }
         if (endsAt.getTime() <= startsAt.getTime()) {
           endsAt.setDate(endsAt.getDate() + 1);
         }
@@ -103,7 +118,11 @@ export function FileUploadZone({
           startsAt: startsAt.toISOString(),
           endsAt: endsAt.toISOString(),
         };
-      });
+      })
+      .filter(
+        (item): item is { date: string; startsAt: string; endsAt: string } =>
+          Boolean(item),
+      );
 
     return validateScheduleConstraints(scheduleShifts).violations;
   };
@@ -167,6 +186,7 @@ export function FileUploadZone({
 
   const processFile = async (selectedFile: File) => {
     setError(null);
+    setWarning(null);
     setSuccess(false);
     setParsedResult(null);
     setSelectedEmployeeId(null);
@@ -199,13 +219,45 @@ export function FileUploadZone({
       // Parse Excel file
       const result = await parseExcelFile(selectedFile);
 
+      let droppedInvalidDates = 0;
+      const sanitizedEmployees = result.employees
+        .map((employee) => {
+          const validShifts = employee.shifts.filter((shift) => {
+            const valid = isValidDate(shift.date);
+            if (!valid) droppedInvalidDates += 1;
+            return valid;
+          });
+          return {
+            ...employee,
+            shifts: validShifts,
+          };
+        })
+        .filter((employee) => employee.shifts.length > 0);
+
+      if (sanitizedEmployees.length === 0) {
+        throw new Error(
+          "Nao foi possivel ler datas validas do ficheiro. Verifique o formato das colunas de data e tente novamente.",
+        );
+      }
+
+      const sanitizedResult: ParsedScheduleResult = {
+        ...result,
+        employees: sanitizedEmployees,
+      };
+
       clearInterval(progressInterval);
       setProgress(100);
       setSuccess(true);
-      setParsedResult(result);
+      setParsedResult(sanitizedResult);
+
+      if (droppedInvalidDates > 0) {
+        setWarning(
+          `Foram ignorados ${droppedInvalidDates} turno(s) com data invalida no ficheiro.`,
+        );
+      }
 
       const nextWarningsByEmployee = Object.fromEntries(
-        result.employees.map((employee) => [
+        sanitizedResult.employees.map((employee) => [
           employee.employeeId,
           getConstraintWarnings(employee.shifts),
         ]),
@@ -213,8 +265,8 @@ export function FileUploadZone({
       setConstraintWarningsByEmployee(nextWarningsByEmployee);
 
       // If only one employee, auto-select and proceed
-      if (result.employees.length === 1) {
-        const employee = result.employees[0];
+      if (sanitizedResult.employees.length === 1) {
+        const employee = sanitizedResult.employees[0];
         setSelectedEmployeeId(employee.employeeId);
         if ((nextWarningsByEmployee[employee.employeeId] ?? []).length > 0) {
           setPendingEmployeeId(employee.employeeId);
@@ -222,7 +274,7 @@ export function FileUploadZone({
           setTimeout(() => {
             onFileProcessed(employee.shifts, employee.employeeName, {
               sourceFile: selectedFile,
-              parsedResult: result,
+              parsedResult: sanitizedResult,
               consentToShare,
             });
           }, 500);
@@ -253,6 +305,7 @@ export function FileUploadZone({
   const handleRemoveFile = () => {
     setFile(null);
     setError(null);
+    setWarning(null);
     setSuccess(false);
     setProgress(0);
     setParsedResult(null);
@@ -297,6 +350,15 @@ export function FileUploadZone({
             <AlertCircle className="w-4 h-4" />
             <AlertDescription className="text-xs sm:text-sm">
               {error}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {warning && (
+          <Alert>
+            <AlertCircle className="w-4 h-4" />
+            <AlertDescription className="text-xs sm:text-sm">
+              {warning}
             </AlertDescription>
           </Alert>
         )}

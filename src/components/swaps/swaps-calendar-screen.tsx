@@ -31,7 +31,6 @@ import type {
   SwapCalendarEventStatus,
 } from "@/components/swaps/swap-calendar.types";
 import { SwapSuggestionCard } from "@/components/swaps/SwapSuggestionCard";
-import { HRSettingsModal } from "@/components/swaps/hr-settings-modal";
 import { getSupabaseClient } from "@/lib/supabase-client";
 import type { ShiftData } from "@/types/shift";
 
@@ -40,6 +39,7 @@ interface SwapsCalendarScreenProps {
   enabled: boolean;
   accessToken?: string | null;
   calendarId?: string | null;
+  onOpenSettings?: () => void;
   backend?: Pick<BackendServices, "shifts" | "swaps" | "users" | "calendar">;
 }
 
@@ -108,6 +108,7 @@ export function SwapsCalendarScreen({
   enabled,
   accessToken = null,
   calendarId = null,
+  onOpenSettings,
   backend,
 }: SwapsCalendarScreenProps) {
   const api = backend ?? getBackend();
@@ -129,7 +130,6 @@ export function SwapsCalendarScreen({
   const [requestShiftsById, setRequestShiftsById] = useState<
     Record<string, Shift>
   >({});
-  const [hrSettingsOpen, setHrSettingsOpen] = useState(false);
   const [hrSettings, setHrSettings] = useState<HRSettings | null>(null);
   const resolvedCalendarId = calendarId ?? hrSettings?.selectedCalendarId;
 
@@ -425,8 +425,10 @@ export function SwapsCalendarScreen({
       const activeHrSettings =
         hrSettings ?? (await api.swaps.getHRSettings(userId));
       if (!activeHrSettings) {
-        setFeedback("Configure primeiro os dados de RH para enviar o pedido.");
-        setHrSettingsOpen(true);
+        setFeedback(
+          "Configure primeiro os dados de RH em Configurações para enviar o pedido.",
+        );
+        onOpenSettings?.();
         return;
       }
 
@@ -697,25 +699,14 @@ export function SwapsCalendarScreen({
 
       <div className="flex justify-end">
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setHrSettingsOpen(true)}>
-            Configurar RH
+          <Button variant="outline" onClick={() => onOpenSettings?.()}>
+            Abrir Configurações
           </Button>
           <Button variant="outline" onClick={() => void loadData()}>
             Atualizar
           </Button>
         </div>
       </div>
-
-      <HRSettingsModal
-        isOpen={hrSettingsOpen}
-        userId={userId}
-        backend={api}
-        onClose={() => setHrSettingsOpen(false)}
-        onSaved={(settings) => {
-          setHrSettings(settings);
-          setFeedback("Definicoes de RH guardadas com sucesso.");
-        }}
-      />
     </motion.div>
   );
 }

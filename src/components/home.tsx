@@ -31,9 +31,11 @@ import {
 import {
   isSharedRecoveryEnabled,
   isSwapsEnabled,
+  isLeaveEnabled,
 } from "@/shared/utils/featureFlags";
 import { SwapAvailabilityPanel } from "@/components/swaps/swap-availability-panel";
 import { SwapsCalendarScreen } from "@/components/swaps/swaps-calendar-screen";
+import { LeaveScreen } from "@/components/leave/leave-screen";
 
 import { useConsent } from "@/lib/cookies/ConsentContext";
 import { SpeedInsights } from "@vercel/speed-insights/react";
@@ -84,12 +86,17 @@ function summarizeShiftInput(shifts: ShiftData[]): {
     shift_uid: string | null;
   }>;
 } {
-  const rows = shifts.map((shift) => ({
-    date: shift.date.toISOString().slice(0, 10),
-    start_time: shift.startTime,
-    end_time: shift.endTime,
-    shift_uid: shift.shiftUid ?? null,
-  }));
+  const rows = shifts
+    .filter(
+      (shift) =>
+        shift.date instanceof Date && !Number.isNaN(shift.date.getTime()),
+    )
+    .map((shift) => ({
+      date: shift.date.toISOString().slice(0, 10),
+      start_time: shift.startTime,
+      end_time: shift.endTime,
+      shift_uid: shift.shiftUid ?? null,
+    }));
 
   const unique_dates = [...new Set(rows.map((row) => row.date))].sort();
 
@@ -116,10 +123,19 @@ function toIsoDateTime(date: Date, time: string): Date {
 
 function buildConstraintInputFromShifts(shifts: ShiftData[]) {
   return shifts
-    .filter((shift) => Boolean(shift.startTime) && Boolean(shift.endTime))
+    .filter(
+      (shift) =>
+        shift.date instanceof Date &&
+        !Number.isNaN(shift.date.getTime()) &&
+        Boolean(shift.startTime) &&
+        Boolean(shift.endTime),
+    )
     .map((shift) => {
       const startsAt = toIsoDateTime(shift.date, shift.startTime);
       const endsAt = toIsoDateTime(shift.date, shift.endTime);
+      if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) {
+        return null;
+      }
       if (endsAt.getTime() <= startsAt.getTime()) {
         endsAt.setDate(endsAt.getDate() + 1);
       }
@@ -129,7 +145,11 @@ function buildConstraintInputFromShifts(shifts: ShiftData[]) {
         startsAt: startsAt.toISOString(),
         endsAt: endsAt.toISOString(),
       };
-    });
+    })
+    .filter(
+      (item): item is { date: string; startsAt: string; endsAt: string } =>
+        Boolean(item),
+    );
 }
 
 async function withTimeout<T>(
@@ -167,7 +187,9 @@ function Home() {
   const location = useLocation();
   const backend = getBackend();
   const swapsEnabled = isSwapsEnabled();
+  const leaveEnabled = isLeaveEnabled();
   const isSwapsRoute = location.pathname.endsWith("/swaps");
+  const isLeaveRoute = location.pathname.endsWith("/leave");
   // Authentication state
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string>("");
@@ -181,6 +203,11 @@ function Home() {
   const [settingsInitialName, setSettingsInitialName] = useState<string>("");
   const [settingsInitialCode, setSettingsInitialCode] = useState<string>("");
   const [settingsInitialEmail, setSettingsInitialEmail] = useState<string>("");
+  const [settingsInitialHrEmail, setSettingsInitialHrEmail] =
+    useState<string>("");
+  const [settingsInitialCcEmails, setSettingsInitialCcEmails] = useState<
+    string[]
+  >([]);
   const [settingsLastUpdatedAt, setSettingsLastUpdatedAt] = useState<
     string | null
   >(null);
@@ -304,6 +331,22 @@ function Home() {
     }
   };
 
+  const loadHrSettings = async (userId: string) => {
+    try {
+      const settings = await withTimeout(
+        backend.swaps.getHRSettings(userId),
+        SESSION_RESTORE_TIMEOUT_MS,
+      );
+
+      setSettingsInitialHrEmail(settings?.hrEmail ?? "");
+      setSettingsInitialCcEmails(settings?.ccEmails ?? []);
+    } catch (error) {
+      console.warn("[ShiftSync] HR settings bootstrap skipped:", error);
+      setSettingsInitialHrEmail("");
+      setSettingsInitialCcEmails([]);
+    }
+  };
+
   // Restore session from Supabase (preferred) or localStorage fallback on mount.
   useEffect(() => {
     let mounted = true;
@@ -327,6 +370,7 @@ function Home() {
             setCurrentStep("upload");
 
             void loadUserProfile(userId);
+            void loadHrSettings(userId);
             void loadDefaultCalendarPreference(userId);
 
             if (providerAccessToken) {
@@ -379,6 +423,7 @@ function Home() {
       setCurrentStep("upload");
 
       void loadUserProfile(session.user.id);
+      void loadHrSettings(session.user.id);
       void loadDefaultCalendarPreference(session.user.id);
     });
   }, [backend.users]);
@@ -763,9 +808,12 @@ function Home() {
 
     try {
       const profile = await backend.users.getUserProfile(currentUserId);
+      const hrSettings = await backend.swaps.getHRSettings(currentUserId);
       setSettingsInitialName(profile?.fullName ?? "");
       setSettingsInitialCode(profile?.employeeCode ?? "");
       setSettingsInitialEmail(profile?.email ?? userEmail);
+      setSettingsInitialHrEmail(hrSettings?.hrEmail ?? "");
+      setSettingsInitialCcEmails(hrSettings?.ccEmails ?? []);
       setSelectedCalendar(
         localStorage.getItem(STORAGE_KEYS.DEFAULT_CALENDAR_ID) ??
           selectedCalendar,
@@ -810,10 +858,10 @@ function Home() {
           onOpenSettings={handleOpenSettings}
           onOpenSwaps={() => navigate("/home/swaps")}
           onOpenDashboard={() => navigate("/home")}
-          swapsActive={isSwapsRoute}
+          swapsActive={isSwapsRoute || isLeaveRoute}
         />
 
-        {!isSwapsRoute && currentUserId && (
+        {!isSwapsRoute && !isLeaveRoute && currentUserId && (
           <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -844,16 +892,60 @@ function Home() {
           </div>
         )}
 
+        {!isSwapsRoute && !isLeaveRoute && currentUserId && (
+          <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">
+                  Gestão de Ausências
+                </p>
+                <p className="text-xs text-slate-600">
+                  {leaveEnabled
+                    ? "Submeta e acompanhe pedidos de férias, doença e ausências."
+                    : "Ausências desativadas neste ambiente. Ative VITE_ENABLE_LEAVE=true para mostrar."}
+                </p>
+              </div>
+              {leaveEnabled ? (
+                <button
+                  type="button"
+                  onClick={() => navigate("/home/leave")}
+                  className="inline-flex items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
+                >
+                  Ver Ausências
+                </button>
+              ) : (
+                <span className="inline-flex items-center rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+                  Funcionalidade desativada
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         {isSwapsRoute && currentUserId ? (
           <SwapsCalendarScreen
             userId={currentUserId}
             enabled={swapsEnabled}
             accessToken={accessToken}
             calendarId={selectedCalendar}
+            onOpenSettings={handleOpenSettings}
           />
         ) : null}
 
-        {!isSwapsRoute ? (
+        {isLeaveRoute && currentUserId ? (
+          <LeaveScreen
+            userId={currentUserId}
+            backend={backend}
+            hrEmail={settingsInitialHrEmail}
+            ccEmails={settingsInitialCcEmails}
+            employeeName={settingsInitialName || profileInitialName}
+            employeeCode={settingsInitialCode || profileInitialCode}
+            accessToken={accessToken}
+            defaultCalendarId={selectedCalendar}
+          />
+        ) : null}
+
+        {!isSwapsRoute && !isLeaveRoute ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
             <div className="lg:col-span-1 space-y-4 sm:space-y-6">
               <CalendarSelector
@@ -953,6 +1045,8 @@ function Home() {
           initialEmail={settingsInitialEmail}
           initialFullName={settingsInitialName}
           initialEmployeeCode={settingsInitialCode}
+          initialHrEmail={settingsInitialHrEmail}
+          initialCcEmails={settingsInitialCcEmails}
           accessToken={accessToken}
           initialDefaultCalendarId={selectedCalendar}
           initialDefaultCalendarName={calendarName}
@@ -961,6 +1055,8 @@ function Home() {
             fullName,
             employeeCode,
             email,
+            hrEmail,
+            ccEmails,
             defaultCalendarId,
             defaultCalendarName,
           }) => {
@@ -984,6 +1080,19 @@ function Home() {
             setSettingsLastUpdatedAt(updatedProfile.updatedAt);
             setProfileInitialName(fullName);
             setProfileInitialCode(employeeCode);
+
+            if (hrEmail.trim()) {
+              await backend.swaps.saveHRSettings({
+                userId: currentUserId,
+                hrEmail: hrEmail.trim(),
+                ccEmails,
+                selectedCalendarId: defaultCalendarId,
+                selectedCalendarName: defaultCalendarName,
+              });
+            }
+
+            setSettingsInitialHrEmail(hrEmail.trim());
+            setSettingsInitialCcEmails(ccEmails);
 
             if (defaultCalendarId) {
               setSelectedCalendar(defaultCalendarId);

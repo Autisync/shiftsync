@@ -114,16 +114,45 @@ export interface HRSettings {
 
 // ── Leave requests ─────────────────────────────────────────────────────────
 
-export type LeaveRequestStatus = "pending" | "approved" | "rejected";
+export type LeaveRequestStatus =
+  | "draft"
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "soft_declined";
 
 export interface LeaveRequest {
   id: string;
   userId: string;
-  startDate: string;
-  endDate: string;
   type: string;
-  status: LeaveRequestStatus;
+  /** ISO date string — as originally requested by the user. */
+  startDate: string;
+  /** ISO date string — as originally requested by the user. */
+  endDate: string;
   notes: string | null;
+  status: LeaveRequestStatus;
+  /** When the HR email was dispatched (status transitions to pending). */
+  sentToHrAt: string | null;
+  /** sent_to_hr_at + 30 days; request becomes soft_declined if still pending. */
+  decisionDueAt: string | null;
+  /** HR-confirmed start date — may differ from requested. Defaults to startDate if null. */
+  approvedStartDate: string | null;
+  /** HR-confirmed end date — may differ from requested. Defaults to endDate if null. */
+  approvedEndDate: string | null;
+  approvedNotes: string | null;
+  hrResponseNotes: string | null;
+  softDeclinedAt: string | null;
+  /** When the approved dates were last written to the user's calendar. */
+  calendarAppliedAt: string | null;
+  /** Google Calendar event id for the leave event (null until first sync). */
+  googleEventId: string | null;
+  /**
+   * Deterministic hash: SHA-256(userId|type|approvedStart|approvedEnd).
+   * Used to detect approved-date changes and avoid duplicate calendar events.
+   */
+  leaveUid: string | null;
+  /** Calendar id that was last synced. */
+  lastSyncedCalendarId: string | null;
   createdAt: string;
   updatedAt: string;
 }

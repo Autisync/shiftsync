@@ -80,6 +80,11 @@ const httpLeave: LeaveService = {
   createLeaveRequest: () => notImplemented("leave.createLeaveRequest"),
   getLeaveRequestsForUser: () =>
     notImplemented("leave.getLeaveRequestsForUser"),
+  markSentToHR: () => notImplemented("leave.markSentToHR"),
+  approveLeaveRequest: () => notImplemented("leave.approveLeaveRequest"),
+  rejectLeaveRequest: () => notImplemented("leave.rejectLeaveRequest"),
+  updateApprovedDates: () => notImplemented("leave.updateApprovedDates"),
+  recordCalendarSync: () => notImplemented("leave.recordCalendarSync"),
   updateLeaveStatus: () => notImplemented("leave.updateLeaveStatus"),
 };
 
@@ -91,6 +96,8 @@ const httpCalendar: CalendarSyncService = {
 
 const httpNotifications: NotificationService = {
   notifyHR: () => notImplemented("notifications.notifyHR"),
+  notifyLeaveStatusChange: () =>
+    notImplemented("notifications.notifyLeaveStatusChange"),
 };
 
 export class HttpProvider implements BackendServices {
