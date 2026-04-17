@@ -89,6 +89,31 @@ function toShiftData(shift: Shift): ShiftData {
   };
 }
 
+function resolveSwapAffectedDateRange(
+  shifts: Shift[],
+  request: SwapRequest,
+): { start: string; end: string } | undefined {
+  const affectedShiftIds = new Set(
+    [request.requesterShiftId, request.targetShiftId].filter(
+      Boolean,
+    ) as string[],
+  );
+
+  const affectedDates = shifts
+    .filter((shift) => affectedShiftIds.has(shift.id))
+    .map((shift) => shift.date);
+
+  if (affectedDates.length === 0) {
+    return undefined;
+  }
+
+  const sorted = [...affectedDates].sort();
+  return {
+    start: sorted[0],
+    end: sorted[sorted.length - 1],
+  };
+}
+
 function deriveStatusForShift(
   shift: Shift,
   openShiftIds: Set<string>,
@@ -181,6 +206,9 @@ export function SwapsCalendarScreen({
   const [isHrPreviewOpen, setIsHrPreviewOpen] = useState(false);
   const [markingHrSent, setMarkingHrSent] = useState(false);
   const syncInFlightRef = useRef(false);
+  const previousRequestStatusesRef = useRef<Map<string, SwapRequestStatus>>(
+    new Map(),
+  );
 
   const fallbackProfile = (id: string): UserProfile => ({
     id,
@@ -322,6 +350,34 @@ export function SwapsCalendarScreen({
 
       const settings = await api.swaps.getHRSettings(userId);
 
+      const previousStatuses = previousRequestStatusesRef.current;
+      if (previousStatuses.size > 0) {
+        for (const request of requests.items) {
+          const previousStatus = previousStatuses.get(request.id);
+          if (!previousStatus || previousStatus === request.status) {
+            continue;
+          }
+
+          if (
+            request.status === "ready_to_apply" &&
+            request.requesterUserId === userId
+          ) {
+            setFeedback("RH aprovou a troca. Já pode atualizar o calendário.");
+            toast.success(
+              "RH aprovou a troca. Já pode atualizar o calendário.",
+            );
+          }
+
+          if (request.status === "rejected") {
+            toast.error("RH recusou a troca.");
+          }
+        }
+      }
+
+      previousRequestStatusesRef.current = new Map(
+        requests.items.map((request) => [request.id, request.status]),
+      );
+
       setOwnShifts(shifts);
       setOpenAvailabilities(availabilities);
       setSwapRequests(requests.items);
@@ -369,6 +425,16 @@ export function SwapsCalendarScreen({
       if ((opts?.showDeletedToast ?? true) && result.summary.deleted > 0) {
         toast.info(
           `Sincronização detectou ${result.summary.deleted} evento(s) removido(s) no Google Calendar e atualizou o calendário de trocas.`,
+        );
+      }
+
+      if (result.summary.updatedFromGoogle > 0) {
+        console.info("[SwapsSync] updated_from_google", {
+          user_id: userId,
+          count: result.summary.updatedFromGoogle,
+        });
+        toast.info(
+          `Sincronização reconciliou ${result.summary.updatedFromGoogle} alteração(ões) feitas diretamente no Google Calendar.`,
         );
       }
 
@@ -667,18 +733,55 @@ export function SwapsCalendarScreen({
       if (accessToken && resolvedCalendarId) {
         const latestOwnShifts = await api.shifts.getShiftsForUser(userId);
         const ownShiftData = latestOwnShifts.map(toShiftData);
+        const affectedRange = resolveSwapAffectedDateRange(
+          latestOwnShifts,
+          request,
+        );
+
+        if (affectedRange) {
+          toast.info(
+            `Reconciliação pós-troca no Google Calendar: ${affectedRange.start} -> ${affectedRange.end}.`,
+          );
+        }
 
         const ownSyncResult = await api.calendar.runSync(ownShiftData, {
           userId,
           accessToken,
           calendarId: resolvedCalendarId,
-          fullResync: false,
+          // Swap completion is authoritative for the affected slots.
+          // We still list Google events in range, but we do not let Google
+          // rewrite those just-applied shifts before diff execution.
+          dateRange: affectedRange,
+          fullResync: true,
           removeStaleEvents: true,
+          preferPlatformChanges: true,
         });
+
+        if (ownSyncResult.errors && ownSyncResult.errors.length > 0) {
+          toast.error(
+            `Google Calendar: ${ownSyncResult.errors.length} erro(s) durante sincronização. Verifique a ligação ao Google e tente novamente.`,
+          );
+        }
+
+        if (ownSyncResult.summary.created > 0) {
+          toast.success(
+            `Google Calendar atualizado: ${ownSyncResult.summary.created} evento(s) criado(s) com o novo horário.`,
+          );
+        }
 
         if (ownSyncResult.summary.deleted > 0) {
           toast.info(
-            `Sincronização detectou ${ownSyncResult.summary.deleted} evento(s) removido(s) no Google Calendar e atualizou o calendário de trocas.`,
+            `Sincronização removeu ${ownSyncResult.summary.deleted} evento(s) desatualizados do Google Calendar.`,
+          );
+        }
+
+        if (ownSyncResult.summary.updatedFromGoogle > 0) {
+          console.info("[SwapsSync] updated_from_google", {
+            user_id: userId,
+            count: ownSyncResult.summary.updatedFromGoogle,
+          });
+          toast.info(
+            `Sincronização reconciliou ${ownSyncResult.summary.updatedFromGoogle} alteração(ões) feitas diretamente no Google Calendar.`,
           );
         }
 
@@ -698,8 +801,10 @@ export function SwapsCalendarScreen({
               userId: counterpartUserId,
               accessToken,
               calendarId: resolvedCalendarId,
-              fullResync: false,
+              dateRange: affectedRange,
+              fullResync: true,
               removeStaleEvents: true,
+              preferPlatformChanges: true,
             });
             counterpartSynced = true;
           }

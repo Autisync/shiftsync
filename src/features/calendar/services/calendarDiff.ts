@@ -209,7 +209,14 @@ function summarize(
       if (action.type === "noop") acc.noop += 1;
       return acc;
     },
-    { created: 0, updated: 0, deleted: 0, noop: 0, failed: 0 },
+    {
+      created: 0,
+      updated: 0,
+      deleted: 0,
+      noop: 0,
+      failed: 0,
+      updatedFromGoogle: 0,
+    },
   );
 }
 

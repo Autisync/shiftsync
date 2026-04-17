@@ -371,6 +371,7 @@ export interface CalendarSyncRunOptions {
   };
   fullResync?: boolean;
   removeStaleEvents?: boolean;
+  preferPlatformChanges?: boolean;
 }
 
 export interface CalendarPreviewSyncResult {
@@ -380,6 +381,7 @@ export interface CalendarPreviewSyncResult {
     deleted: number;
     noop: number;
     failed: number;
+    updatedFromGoogle: number;
   };
   changes?: Array<{
     type: "create" | "update" | "delete" | "noop";
@@ -405,6 +407,7 @@ export interface CalendarPreviewOptions {
   };
   fullResync?: boolean;
   removeStaleEvents?: boolean;
+  preferPlatformChanges?: boolean;
 }
 
 export interface CalendarSyncService {

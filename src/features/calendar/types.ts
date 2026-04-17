@@ -13,6 +13,9 @@ export interface CalendarSyncOptions {
   calendarId: string;
   fullResync?: boolean;
   removeStaleEvents?: boolean;
+  // When true, keep ShiftSync as source of truth and do not rewrite shifts
+  // from Google event content during the pre-plan reconciliation step.
+  preferPlatformChanges?: boolean;
   dateRange?: CalendarDateRange;
 }
 
@@ -22,6 +25,7 @@ export interface CalendarSyncPreviewSummary {
   deleted: number;
   noop: number;
   failed: number;
+  updatedFromGoogle: number;
 }
 
 export interface CalendarSyncPreviewChange {

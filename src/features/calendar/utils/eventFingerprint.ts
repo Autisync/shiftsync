@@ -24,6 +24,14 @@ export function buildShiftSyncKey(shift: ShiftData, userId: string): string {
     return `${userId}::uid:${explicitUid}`;
   }
 
+  // If parser/database does not provide shiftUid, prefer Google event identity.
+  // This keeps the key stable when the user edits date/time/title directly in
+  // Google Calendar, avoiding false stale-deletes during reconciliation.
+  const eventId = shift.googleEventId?.trim();
+  if (eventId) {
+    return `${userId}::gid:${eventId}`;
+  }
+
   // Key MUST be stable across re-parses even when shift times or content change.
   // shift.id contains Date.now() (e.g. "shift-47-0-1775778823266") so it changes
   // every parse — never use it as the key.

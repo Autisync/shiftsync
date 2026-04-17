@@ -1904,6 +1904,16 @@ const supabaseSwaps: SwapService = {
     const supabase = getSupabaseClient();
     if (!supabase) throw new Error("Supabase client unavailable");
 
+    // Fetch shift IDs before applying so we can purge stale sync records
+    // after ownership changes. Old calendar_sync_records carry the previous
+    // owner's sync keys; leaving them in place causes the sync engine to
+    // mis-match new shifts via fuzzy fallback and emit UPDATE instead of CREATE.
+    const { data: preData } = await supabase
+      .from("swap_requests")
+      .select("requester_shift_id, target_shift_id")
+      .eq("id", requestId)
+      .single();
+
     const { error: rpcError } = await supabase.rpc("apply_swap_request", {
       p_request_id: requestId,
     });
@@ -1919,6 +1929,22 @@ const supabaseSwaps: SwapService = {
         );
       }
       throw new Error(getErrorMessage(rpcError));
+    }
+
+    // Remove stale tracking records for both swapped shifts so the next
+    // calendar sync always creates fresh events under the new owners.
+    if (preData) {
+      const shiftIds = [
+        preData.requester_shift_id,
+        preData.target_shift_id,
+      ].filter(Boolean) as string[];
+
+      if (shiftIds.length > 0) {
+        await supabase
+          .from("calendar_sync_records")
+          .delete()
+          .in("shift_id", shiftIds);
+      }
     }
 
     const { data, error } = await supabase
@@ -2419,6 +2445,7 @@ const supabaseCalendar: CalendarSyncService = {
             dateRange: options.dateRange,
             fullResync: options.fullResync,
             removeStaleEvents: options.removeStaleEvents ?? true,
+            preferPlatformChanges: options.preferPlatformChanges,
           },
         });
         emitCalendarSyncCompatibilityMode(false);
@@ -2441,6 +2468,7 @@ const supabaseCalendar: CalendarSyncService = {
               dateRange: options.dateRange,
               fullResync: options.fullResync,
               removeStaleEvents: options.removeStaleEvents ?? true,
+              preferPlatformChanges: options.preferPlatformChanges,
             },
           });
         } else {
@@ -2487,6 +2515,7 @@ const supabaseCalendar: CalendarSyncService = {
           dateRange: options.dateRange,
           fullResync: options.fullResync,
           removeStaleEvents: options.removeStaleEvents ?? true,
+          preferPlatformChanges: options.preferPlatformChanges,
         },
       });
       return {
@@ -2507,6 +2536,7 @@ const supabaseCalendar: CalendarSyncService = {
           dateRange: options.dateRange,
           fullResync: options.fullResync,
           removeStaleEvents: options.removeStaleEvents ?? true,
+          preferPlatformChanges: options.preferPlatformChanges,
         },
       });
       emitCalendarSyncCompatibilityMode(false);
@@ -2535,6 +2565,7 @@ const supabaseCalendar: CalendarSyncService = {
           dateRange: options.dateRange,
           fullResync: options.fullResync,
           removeStaleEvents: options.removeStaleEvents ?? true,
+          preferPlatformChanges: options.preferPlatformChanges,
         },
       });
       return {

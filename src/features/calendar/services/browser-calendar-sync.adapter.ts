@@ -109,8 +109,12 @@ function findUpdateCandidate(
   }
 
   const sorted = [...candidates].sort((a, b) => {
-    const aDelta = Math.abs(new Date(a.start?.dateTime ?? 0).getTime() - targetStart);
-    const bDelta = Math.abs(new Date(b.start?.dateTime ?? 0).getTime() - targetStart);
+    const aDelta = Math.abs(
+      new Date(a.start?.dateTime ?? 0).getTime() - targetStart,
+    );
+    const bDelta = Math.abs(
+      new Date(b.start?.dateTime ?? 0).getTime() - targetStart,
+    );
     return aDelta - bDelta;
   });
 
@@ -120,8 +124,12 @@ function findUpdateCandidate(
     return best;
   }
 
-  const bestDelta = Math.abs(new Date(best.start?.dateTime ?? 0).getTime() - targetStart);
-  const secondDelta = Math.abs(new Date(second.start?.dateTime ?? 0).getTime() - targetStart);
+  const bestDelta = Math.abs(
+    new Date(best.start?.dateTime ?? 0).getTime() - targetStart,
+  );
+  const secondDelta = Math.abs(
+    new Date(second.start?.dateTime ?? 0).getTime() - targetStart,
+  );
   if (bestDelta === secondDelta) {
     return undefined;
   }
@@ -155,6 +163,7 @@ export class BrowserCalendarSyncAdapter {
       deleted: 0,
       noop: 0,
       failed: 0,
+      updatedFromGoogle: 0,
     };
 
     if (shifts.length === 0) {
@@ -205,7 +214,8 @@ export class BrowserCalendarSyncAdapter {
         const candidateByContent = findUpdateCandidate(events, payload);
 
         if (shift.status === "deleted") {
-          const deletableEvent = existingById ?? exactMatch ?? candidateByContent;
+          const deletableEvent =
+            existingById ?? exactMatch ?? candidateByContent;
           if (deletableEvent) {
             try {
               await service.deleteEvent(calendarId, deletableEvent.id);

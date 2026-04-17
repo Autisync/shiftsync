@@ -95,6 +95,19 @@ function reconcileShiftWithGoogleEvent(
   };
 }
 
+function hasGoogleDrivenShiftUpdate(
+  previous: ShiftData,
+  next: ShiftData,
+): boolean {
+  return (
+    previous.date.toISOString().slice(0, 10) !==
+      next.date.toISOString().slice(0, 10) ||
+    previous.startTime !== next.startTime ||
+    previous.endTime !== next.endTime ||
+    (previous.notes ?? "") !== (next.notes ?? "")
+  );
+}
+
 function expandRepositoryRange(range: { start: string; end: string }): {
   start: string;
   end: string;
@@ -110,6 +123,7 @@ function withDefaults(options: CalendarSyncOptions): CalendarSyncOptions {
     ...options,
     removeStaleEvents: options.removeStaleEvents ?? false,
     fullResync: options.fullResync ?? false,
+    preferPlatformChanges: options.preferPlatformChanges ?? false,
   };
 }
 
@@ -285,8 +299,9 @@ export class CalendarSyncService {
     const trackedRecords = [...trackedRecordsById.values()];
 
     let shiftsForPlan = [...input.shifts];
+    let updatedFromGoogle = 0;
 
-    if (adapter.listEvents) {
+    if (adapter.listEvents && !options.preferPlatformChanges) {
       try {
         const events = await adapter.listEvents(options.calendarId, {
           timeMin: `${range.start}T00:00:00Z`,
@@ -310,7 +325,15 @@ export class CalendarSyncService {
             };
           }
 
-          return reconcileShiftWithGoogleEvent(shift, googleEvent);
+          const reconciledShift = reconcileShiftWithGoogleEvent(
+            shift,
+            googleEvent,
+          );
+          if (hasGoogleDrivenShiftUpdate(shift, reconciledShift)) {
+            updatedFromGoogle += 1;
+          }
+
+          return reconciledShift;
         });
       } catch {
         // Keep standard behavior if event listing fails.
@@ -393,7 +416,7 @@ export class CalendarSyncService {
       }
     }
 
-    const summary = { ...plan.summary };
+    const summary = { ...plan.summary, updatedFromGoogle };
     const errors: CalendarSyncExecutionResult["errors"] = [];
     const syncedShifts: ShiftData[] = [];
 
