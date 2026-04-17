@@ -64,7 +64,7 @@ describe("swap workflow transitions", () => {
   it("returns role-appropriate actions for requester and target inboxes", () => {
     const pending = makeRequest({ status: "pending" });
     expect(getAllowedActionsForUser(pending, "u-target")).toEqual([
-      "awaiting_hr_request",
+      "accepted",
       "rejected",
     ]);
     expect(getAllowedActionsForUser(pending, "u-requester")).toEqual([]);

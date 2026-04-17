@@ -18,6 +18,14 @@ import type {
   ScheduleAccessRequest,
   AccessRequestStatus,
   HRSettings,
+  AppNotification,
+  LeaveRequestAttachment,
+  PaginatedQuery,
+  PaginatedResult,
+  ReminderJob,
+  SyncSession,
+  UploadTrustAssessment,
+  WorkflowActionToken,
 } from "@/types/domain";
 
 // ── Notification payloads ──────────────────────────────────────────────────
@@ -33,6 +41,36 @@ export interface LeaveNotificationPayload {
   type: string;
   notes: string | null;
   updatedAt: string;
+}
+
+export interface WorkflowActionValidationResult {
+  valid: boolean;
+  reason?: string;
+  tokenId?: string;
+  targetId?: string;
+  workflowType?: "swap_hr_decision";
+}
+
+export interface EmailPreviewPayload {
+  subject: string;
+  to: string[];
+  cc: string[];
+  body: string;
+  attachments: Array<{
+    fileName: string;
+    fileType: string | null;
+    fileSize: number | null;
+  }>;
+}
+
+export interface UploadSelectionSyncInput {
+  userId: string;
+  uploadId: string;
+  acknowledgeRisk: boolean;
+  acknowledgedAt?: string;
+  acknowledgedByUserId?: string;
+  calendarId: string;
+  accessToken: string;
 }
 import type { ShiftData } from "@/types/shift";
 
@@ -93,6 +131,20 @@ export interface UploadService {
   ): Promise<ScheduleUpload>;
   getUploadById(id: string): Promise<ScheduleUpload | null>;
   getUploadsByUser(userId: string): Promise<ScheduleUpload[]>;
+  getUploadsByUserPaginated(
+    userId: string,
+    query: PaginatedQuery,
+  ): Promise<PaginatedResult<ScheduleUpload>>;
+  getUploadTrustAssessments(
+    userId: string,
+    query: PaginatedQuery,
+  ): Promise<PaginatedResult<UploadTrustAssessment>>;
+  getUploadTrustAssessmentByUpload(
+    uploadId: string,
+  ): Promise<UploadTrustAssessment | null>;
+  startUploadSelectionSync(
+    input: UploadSelectionSyncInput,
+  ): Promise<SyncSession>;
   getAccessRequestsForUpload(
     uploadId: string,
   ): Promise<ScheduleAccessRequest[]>;
@@ -126,6 +178,10 @@ export interface SwapService {
     message?: string;
   }): Promise<SwapRequest>;
   getSwapRequestsForUser(userId: string): Promise<SwapRequest[]>;
+  getSwapRequestsForUserPaginated(
+    userId: string,
+    query: PaginatedQuery,
+  ): Promise<PaginatedResult<SwapRequest>>;
   updateSwapStatus(
     id: string,
     status: SwapRequestStatus,
@@ -145,6 +201,21 @@ export interface SwapService {
     actorUserId?: string,
   ): Promise<SwapRequest>;
   markHRApproved(requestId: string, actorUserId?: string): Promise<SwapRequest>;
+  createHrDecisionLinks(input: {
+    requestId: string;
+    actorUserId?: string;
+    baseUrl?: string;
+    expiresInHours?: number;
+  }): Promise<{
+    approveUrl: string;
+    declineUrl: string;
+    expiresAt: string;
+  }>;
+  processHrDecisionAction(input: {
+    token: string;
+    action: "approve" | "decline";
+    actorEmail?: string;
+  }): Promise<SwapRequest>;
   applySwap(requestId: string): Promise<SwapRequest>;
   getHRSettings(userId: string): Promise<HRSettings | null>;
   saveHRSettings(input: {
@@ -209,6 +280,39 @@ export interface LeaveService {
   ): Promise<LeaveRequest>;
 
   getLeaveRequestsForUser(userId: string): Promise<LeaveRequest[]>;
+  getLeaveRequestsForUserPaginated(
+    userId: string,
+    query: PaginatedQuery,
+  ): Promise<PaginatedResult<LeaveRequest>>;
+
+  createLeaveEmailPreview(input: {
+    leaveRequestId: string;
+    hrEmail: string;
+    ccEmails?: string[];
+    employeeName?: string;
+    employeeCode?: string;
+    attachments?: Array<{
+      fileName: string;
+      fileType?: string | null;
+      fileSize?: number | null;
+      storagePath?: string | null;
+    }>;
+  }): Promise<EmailPreviewPayload>;
+
+  confirmLeaveSubmission(input: {
+    leaveRequestId: string;
+    emailPreview: EmailPreviewPayload;
+    attachments?: Array<{
+      fileName: string;
+      fileType?: string | null;
+      fileSize?: number | null;
+      storagePath?: string | null;
+    }>;
+  }): Promise<LeaveRequest>;
+
+  getAttachmentsByLeaveRequest(
+    leaveRequestId: string,
+  ): Promise<LeaveRequestAttachment[]>;
 
   /** Transitions status → pending and records sent_to_hr_at / decision_due_at. */
   markSentToHR(id: string): Promise<LeaveRequest>;
@@ -328,6 +432,41 @@ export interface NotificationService {
   notifyHR(subject: string, body: string): Promise<void>;
   /** Dispatched after a leave request status changes (pending→approved/rejected). */
   notifyLeaveStatusChange(payload: LeaveNotificationPayload): Promise<void>;
+  backfillSwapRequestNotifications(userId: string): Promise<number>;
+  listNotifications(
+    userId: string,
+    query: PaginatedQuery,
+  ): Promise<PaginatedResult<AppNotification>>;
+  markNotificationAsRead(notificationId: string): Promise<void>;
+  markAllNotificationsAsRead(userId: string): Promise<void>;
+  getUnreadCount(userId: string): Promise<number>;
+}
+
+export interface WorkflowService {
+  createActionToken(input: {
+    workflowType: "swap_hr_decision";
+    targetId: string;
+    expiresInMinutes: number;
+  }): Promise<WorkflowActionToken>;
+  validateActionToken(token: string): Promise<WorkflowActionValidationResult>;
+  consumeActionToken(input: {
+    token: string;
+    action: "approve" | "decline";
+    actorEmail?: string;
+  }): Promise<WorkflowActionValidationResult>;
+}
+
+export interface ReminderService {
+  createReminder(input: {
+    userId: string;
+    type: "days_off_selection";
+    triggerAt: string;
+    payload?: Record<string, unknown>;
+  }): Promise<ReminderJob>;
+  getRemindersByUser(
+    userId: string,
+    query: PaginatedQuery,
+  ): Promise<PaginatedResult<ReminderJob>>;
 }
 
 // ── Aggregated provider contract ───────────────────────────────────────────
@@ -341,4 +480,6 @@ export interface BackendServices {
   leave: LeaveService;
   calendar: CalendarSyncService;
   notifications: NotificationService;
+  workflow: WorkflowService;
+  reminders: ReminderService;
 }

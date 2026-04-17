@@ -16,6 +16,8 @@ import type {
   LeaveService,
   CalendarSyncService,
   NotificationService,
+  WorkflowService,
+  ReminderService,
 } from "./types";
 
 function notImplemented(method: string): never {
@@ -54,6 +56,14 @@ const httpUploads: UploadService = {
   createUpload: () => notImplemented("uploads.createUpload"),
   getUploadById: () => notImplemented("uploads.getUploadById"),
   getUploadsByUser: () => notImplemented("uploads.getUploadsByUser"),
+  getUploadsByUserPaginated: () =>
+    notImplemented("uploads.getUploadsByUserPaginated"),
+  getUploadTrustAssessments: () =>
+    notImplemented("uploads.getUploadTrustAssessments"),
+  getUploadTrustAssessmentByUpload: () =>
+    notImplemented("uploads.getUploadTrustAssessmentByUpload"),
+  startUploadSelectionSync: () =>
+    notImplemented("uploads.startUploadSelectionSync"),
   getAccessRequestsForUpload: () =>
     notImplemented("uploads.getAccessRequestsForUpload"),
   createAccessRequest: () => notImplemented("uploads.createAccessRequest"),
@@ -66,11 +76,16 @@ const httpSwaps: SwapService = {
   getOpenAvailabilities: () => notImplemented("swaps.getOpenAvailabilities"),
   createSwapRequest: () => notImplemented("swaps.createSwapRequest"),
   getSwapRequestsForUser: () => notImplemented("swaps.getSwapRequestsForUser"),
+  getSwapRequestsForUserPaginated: () =>
+    notImplemented("swaps.getSwapRequestsForUserPaginated"),
   updateSwapStatus: (_id, _status, _actorUserId) =>
     notImplemented("swaps.updateSwapStatus"),
   acceptSwapRequest: () => notImplemented("swaps.acceptSwapRequest"),
   markHREmailSent: () => notImplemented("swaps.markHREmailSent"),
   markHRApproved: () => notImplemented("swaps.markHRApproved"),
+  createHrDecisionLinks: () => notImplemented("swaps.createHrDecisionLinks"),
+  processHrDecisionAction: () =>
+    notImplemented("swaps.processHrDecisionAction"),
   applySwap: () => notImplemented("swaps.applySwap"),
   getHRSettings: () => notImplemented("swaps.getHRSettings"),
   saveHRSettings: () => notImplemented("swaps.saveHRSettings"),
@@ -80,6 +95,13 @@ const httpLeave: LeaveService = {
   createLeaveRequest: () => notImplemented("leave.createLeaveRequest"),
   getLeaveRequestsForUser: () =>
     notImplemented("leave.getLeaveRequestsForUser"),
+  getLeaveRequestsForUserPaginated: () =>
+    notImplemented("leave.getLeaveRequestsForUserPaginated"),
+  createLeaveEmailPreview: () =>
+    notImplemented("leave.createLeaveEmailPreview"),
+  confirmLeaveSubmission: () => notImplemented("leave.confirmLeaveSubmission"),
+  getAttachmentsByLeaveRequest: () =>
+    notImplemented("leave.getAttachmentsByLeaveRequest"),
   markSentToHR: () => notImplemented("leave.markSentToHR"),
   approveLeaveRequest: () => notImplemented("leave.approveLeaveRequest"),
   rejectLeaveRequest: () => notImplemented("leave.rejectLeaveRequest"),
@@ -98,6 +120,25 @@ const httpNotifications: NotificationService = {
   notifyHR: () => notImplemented("notifications.notifyHR"),
   notifyLeaveStatusChange: () =>
     notImplemented("notifications.notifyLeaveStatusChange"),
+  backfillSwapRequestNotifications: () =>
+    notImplemented("notifications.backfillSwapRequestNotifications"),
+  listNotifications: () => notImplemented("notifications.listNotifications"),
+  markNotificationAsRead: () =>
+    notImplemented("notifications.markNotificationAsRead"),
+  markAllNotificationsAsRead: () =>
+    notImplemented("notifications.markAllNotificationsAsRead"),
+  getUnreadCount: () => notImplemented("notifications.getUnreadCount"),
+};
+
+const httpWorkflow: WorkflowService = {
+  createActionToken: () => notImplemented("workflow.createActionToken"),
+  validateActionToken: () => notImplemented("workflow.validateActionToken"),
+  consumeActionToken: () => notImplemented("workflow.consumeActionToken"),
+};
+
+const httpReminders: ReminderService = {
+  createReminder: () => notImplemented("reminders.createReminder"),
+  getRemindersByUser: () => notImplemented("reminders.getRemindersByUser"),
 };
 
 export class HttpProvider implements BackendServices {
@@ -112,4 +153,6 @@ export class HttpProvider implements BackendServices {
   leave = httpLeave;
   calendar = httpCalendar;
   notifications = httpNotifications;
+  workflow = httpWorkflow;
+  reminders = httpReminders;
 }

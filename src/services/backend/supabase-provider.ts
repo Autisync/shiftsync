@@ -19,6 +19,10 @@ import type {
   CalendarSyncService,
   NotificationService,
   LeaveNotificationPayload,
+  EmailPreviewPayload,
+  ReminderService,
+  WorkflowService,
+  WorkflowActionValidationResult,
 } from "./types";
 import type {
   AuthSession,
@@ -32,6 +36,14 @@ import type {
   ScheduleUpload,
   ScheduleAccessRequest,
   HRSettings,
+  AppNotification,
+  LeaveRequestAttachment,
+  PaginatedQuery,
+  PaginatedResult,
+  ReminderJob,
+  SyncSession,
+  UploadTrustAssessment,
+  WorkflowActionToken,
 } from "@/types/domain";
 import { toUserProfile } from "@/shared/mappers/user.mapper";
 import { toShift } from "@/shared/mappers/shift.mapper";
@@ -46,6 +58,7 @@ import {
   toScheduleUpload,
   toScheduleAccessRequest,
 } from "@/shared/mappers/upload.mapper";
+import { GoogleCalendarService } from "@/lib/google-calendar";
 import { CalendarSyncService as Phase3CalendarSync } from "@/features/calendar/services/calendarSyncService";
 import type { CalendarSyncRecordRepository } from "@/features/calendar/types";
 import type { ShiftData } from "@/types/shift";
@@ -60,6 +73,37 @@ function assertNoError<T>(result: { data: T | null; error: unknown }): T {
   return result.data;
 }
 
+function normalizeQuery(query: PaginatedQuery): {
+  page: number;
+  pageSize: number;
+} {
+  const page = Number.isFinite(query.page)
+    ? Math.max(1, Math.floor(query.page))
+    : 1;
+  const pageSize = Number.isFinite(query.pageSize)
+    ? Math.min(100, Math.max(1, Math.floor(query.pageSize)))
+    : 10;
+  return { page, pageSize };
+}
+
+function toPaginatedResult<T>(input: {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+}): PaginatedResult<T> {
+  const totalPages = Math.max(1, Math.ceil(input.total / input.pageSize));
+  return {
+    items: input.items,
+    page: input.page,
+    pageSize: input.pageSize,
+    total: input.total,
+    totalPages,
+    hasNextPage: input.page < totalPages,
+    hasPreviousPage: input.page > 1,
+  };
+}
+
 function getHomeRedirectUrl(): string {
   return `${window.location.origin}${import.meta.env.BASE_URL ?? "/"}home`;
 }
@@ -69,6 +113,102 @@ function isUuid(value: string | null | undefined): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value,
   );
+}
+
+function createSecureToken(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function extractInvokeErrorMessage(error: unknown): Promise<string> {
+  const baseMessage = getErrorMessage(error);
+  const response = (error as { context?: unknown } | null)?.context as
+    | {
+        status?: number;
+        statusText?: string;
+        text?: () => Promise<string>;
+      }
+    | undefined;
+
+  if (!response || typeof response.text !== "function") {
+    return baseMessage;
+  }
+
+  try {
+    const rawBody = await response.text();
+    if (!rawBody) {
+      return baseMessage;
+    }
+
+    let parsedBody: Record<string, unknown> | null = null;
+    try {
+      parsedBody = JSON.parse(rawBody) as Record<string, unknown>;
+    } catch {
+      parsedBody = null;
+    }
+
+    const statusPart = Number.isFinite(response.status)
+      ? `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`
+      : "HTTP error";
+
+    if (parsedBody) {
+      const errorText =
+        typeof parsedBody.error === "string" ? parsedBody.error : null;
+      const detailsText =
+        typeof parsedBody.details === "string"
+          ? parsedBody.details
+          : Array.isArray(parsedBody.details)
+            ? parsedBody.details.join(" | ")
+            : null;
+
+      const parts = [statusPart, errorText, detailsText].filter(Boolean);
+      if (parts.length > 0) {
+        return parts.join(": ");
+      }
+    }
+
+    return `${statusPart}: ${rawBody}`;
+  } catch {
+    return baseMessage;
+  }
+}
+
+async function createInAppNotification(input: {
+  userId: string;
+  type: AppNotification["type"];
+  title: string;
+  body: string;
+  entityType?: string;
+  entityId?: string;
+}): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return;
+
+  const { error } = await (supabase as any).from("notifications").insert({
+    user_id: input.userId,
+    type: input.type,
+    title: input.title,
+    body: input.body,
+    entity_type: input.entityType ?? null,
+    entity_id: input.entityId ?? null,
+    created_at: new Date().toISOString(),
+  });
+
+  if (error) {
+    console.warn("[notifications] create failed", getErrorMessage(error));
+    return;
+  }
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("in-app-notification-created", {
+        detail: { userId: input.userId },
+      }),
+    );
+  }
 }
 
 // ── Calendar sync helpers ──────────────────────────────────────────────────
@@ -628,22 +768,49 @@ const supabaseUsers: UserService = {
   ): Promise<UserProfile> {
     const supabase = getSupabaseClient();
     if (!supabase) throw new Error("Supabase client unavailable");
+
+    const updatePayload = {
+      ...(updates.fullName !== undefined && {
+        full_name: updates.fullName,
+      }),
+      ...(updates.employeeCode !== undefined && {
+        employee_code: updates.employeeCode,
+      }),
+      ...(updates.email !== undefined && { email: updates.email }),
+    };
+
     const { data, error } = await supabase
       .from("users")
-      .update({
-        ...(updates.fullName !== undefined && {
-          full_name: updates.fullName,
-        }),
-        ...(updates.employeeCode !== undefined && {
-          employee_code: updates.employeeCode,
-        }),
-        ...(updates.email !== undefined && { email: updates.email }),
-      })
+      .update(updatePayload)
       .eq("id", userId)
       .select()
-      .single();
+      .maybeSingle();
+
     if (error) throw error;
-    return toUserProfile(data);
+
+    if (data) {
+      return toUserProfile(data);
+    }
+
+    const fallbackEmployeeCode =
+      updates.employeeCode?.trim() || `USER-${userId.slice(0, 8)}`;
+
+    const { data: upsertedData, error: upsertError } = await supabase
+      .from("users")
+      .upsert(
+        {
+          id: userId,
+          employee_code: fallbackEmployeeCode,
+          full_name: updates.fullName ?? null,
+          email: updates.email ?? null,
+        },
+        { onConflict: "id" },
+      )
+      .select()
+      .single();
+
+    if (upsertError) throw upsertError;
+    return toUserProfile(upsertedData);
   },
 
   async getDefaultCalendarPreference(userId: string): Promise<{
@@ -807,7 +974,18 @@ const supabaseUploads: UploadService = {
       })
       .select()
       .single();
-    return toScheduleUpload(assertNoError({ data: row, error }));
+    const upload = toScheduleUpload(assertNoError({ data: row, error }));
+
+    await createInAppNotification({
+      userId: data.uploaderUserId,
+      type: "upload_processing",
+      title: "Upload processado",
+      body: "O seu ficheiro de escala foi importado para o estado interno.",
+      entityType: "schedule_upload",
+      entityId: upload.id,
+    });
+
+    return upload;
   },
 
   async getUploadById(id: string): Promise<ScheduleUpload | null> {
@@ -832,6 +1010,261 @@ const supabaseUploads: UploadService = {
       .order("uploaded_at", { ascending: false });
     if (error) throw error;
     return (data ?? []).map(toScheduleUpload);
+  },
+
+  async getUploadsByUserPaginated(
+    userId: string,
+    query: PaginatedQuery,
+  ): Promise<PaginatedResult<ScheduleUpload>> {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return toPaginatedResult({ items: [], page: 1, pageSize: 10, total: 0 });
+    }
+
+    const { page, pageSize } = normalizeQuery(query);
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, error, count } = await supabase
+      .from("schedule_uploads")
+      .select("*", { count: "exact" })
+      .eq("uploader_user_id", userId)
+      .order("uploaded_at", { ascending: false })
+      .range(from, to);
+
+    if (error) throw error;
+
+    return toPaginatedResult({
+      items: (data ?? []).map(toScheduleUpload),
+      page,
+      pageSize,
+      total: count ?? 0,
+    });
+  },
+
+  async getUploadTrustAssessments(
+    userId: string,
+    query: PaginatedQuery,
+  ): Promise<PaginatedResult<UploadTrustAssessment>> {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return toPaginatedResult({ items: [], page: 1, pageSize: 10, total: 0 });
+    }
+
+    const { page, pageSize } = normalizeQuery(query);
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+    const db = supabase as unknown as {
+      from: (table: string) => {
+        select: (
+          cols: string,
+          opts?: { count?: "exact" | "planned" | "estimated" },
+        ) => {
+          eq: (
+            col: string,
+            val: string,
+          ) => {
+            order: (
+              col: string,
+              opts: { ascending: boolean },
+            ) => {
+              range: (
+                from: number,
+                to: number,
+              ) => Promise<{
+                data: Array<Record<string, unknown>> | null;
+                error: unknown;
+                count: number | null;
+              }>;
+            };
+          };
+        };
+      };
+    };
+
+    const result = await db
+      .from("upload_trust_assessments")
+      .select("*", { count: "exact" })
+      .eq("user_id", userId)
+      .order("assessed_at", { ascending: false })
+      .range(from, to);
+
+    if (result.error) {
+      throw new Error(getErrorMessage(result.error));
+    }
+
+    const items: UploadTrustAssessment[] = (result.data ?? []).map((row) => ({
+      id: String(row.id),
+      uploadId: String(row.upload_id),
+      userId: String(row.user_id),
+      normalizedCoverageStart:
+        (row.normalized_coverage_start as string | null) ?? null,
+      normalizedCoverageEnd:
+        (row.normalized_coverage_end as string | null) ?? null,
+      duplicateCoverageCount: Number(row.duplicate_coverage_count ?? 0),
+      trustScore: Number(row.trust_score ?? 0),
+      trustLevel: (row.trust_level as "low" | "medium" | "high") ?? "low",
+      trustReason: String(row.trust_reason ?? "Sem avaliação detalhada"),
+      conflictsCount: Number(row.conflicts_count ?? 0),
+      assessedAt: String(row.assessed_at ?? new Date(0).toISOString()),
+    }));
+
+    return toPaginatedResult({
+      items,
+      page,
+      pageSize,
+      total: result.count ?? 0,
+    });
+  },
+
+  async getUploadTrustAssessmentByUpload(
+    uploadId: string,
+  ): Promise<UploadTrustAssessment | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+
+    const db = supabase as unknown as {
+      from: (table: string) => {
+        select: (cols: string) => {
+          eq: (
+            col: string,
+            val: string,
+          ) => {
+            maybeSingle: () => Promise<{
+              data: Record<string, unknown> | null;
+              error: unknown;
+            }>;
+          };
+        };
+      };
+    };
+
+    const { data, error } = await db
+      .from("upload_trust_assessments")
+      .select("*")
+      .eq("upload_id", uploadId)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(getErrorMessage(error));
+    }
+    if (!data) return null;
+
+    return {
+      id: String(data.id),
+      uploadId: String(data.upload_id),
+      userId: String(data.user_id),
+      normalizedCoverageStart:
+        (data.normalized_coverage_start as string | null) ?? null,
+      normalizedCoverageEnd:
+        (data.normalized_coverage_end as string | null) ?? null,
+      duplicateCoverageCount: Number(data.duplicate_coverage_count ?? 0),
+      trustScore: Number(data.trust_score ?? 0),
+      trustLevel: (data.trust_level as "low" | "medium" | "high") ?? "low",
+      trustReason: String(data.trust_reason ?? "Sem avaliação detalhada"),
+      conflictsCount: Number(data.conflicts_count ?? 0),
+      assessedAt: String(data.assessed_at ?? new Date(0).toISOString()),
+    };
+  },
+
+  async startUploadSelectionSync(input): Promise<SyncSession> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    if (!input.acknowledgeRisk) {
+      throw new Error(
+        "Confirme o reconhecimento de risco antes de sincronizar.",
+      );
+    }
+
+    const acknowledgedAt = input.acknowledgedAt ?? new Date().toISOString();
+    const acknowledgedByUserId = input.acknowledgedByUserId ?? input.userId;
+
+    const { data: sessionRow, error: sessionError } = await (supabase as any)
+      .from("sync_sessions")
+      .insert({
+        user_id: input.userId,
+        upload_id: input.uploadId,
+        source: "schedule_share",
+        status: "running",
+        summary: {
+          calendar_id: input.calendarId,
+          acknowledge_risk: input.acknowledgeRisk,
+          acknowledged_at: acknowledgedAt,
+          acknowledged_by_user_id: acknowledgedByUserId,
+        },
+        started_at: new Date().toISOString(),
+      })
+      .select("*")
+      .single();
+
+    if (sessionError) {
+      throw new Error(getErrorMessage(sessionError));
+    }
+
+    await (supabase as any)
+      .from("schedule_uploads")
+      .update({
+        selected_for_sync_at: acknowledgedAt,
+        processing_status: "syncing",
+      })
+      .eq("id", input.uploadId)
+      .eq("uploader_user_id", input.userId);
+
+    const { error: invokeError } = await supabase.functions.invoke(
+      "sync-upload-selection",
+      {
+        body: {
+          user_id: input.userId,
+          upload_id: input.uploadId,
+          calendar_id: input.calendarId,
+          access_token: input.accessToken,
+          sync_session_id: sessionRow.id,
+        },
+      },
+    );
+
+    if (invokeError) {
+      await (supabase as any)
+        .from("sync_sessions")
+        .update({
+          status: "failed",
+          error: getErrorMessage(invokeError),
+          finished_at: new Date().toISOString(),
+        })
+        .eq("id", sessionRow.id);
+
+      await createInAppNotification({
+        userId: input.userId,
+        type: "schedule_share",
+        title: "Sincronização da partilha falhou",
+        body: "Não foi possível iniciar a sincronização do upload selecionado.",
+        entityType: "sync_session",
+        entityId: String(sessionRow.id),
+      });
+      throw new Error(getErrorMessage(invokeError));
+    }
+
+    await createInAppNotification({
+      userId: input.userId,
+      type: "schedule_share",
+      title: "Sincronização iniciada",
+      body: "A sincronização do upload para o calendário foi iniciada.",
+      entityType: "sync_session",
+      entityId: String(sessionRow.id),
+    });
+
+    return {
+      id: String(sessionRow.id),
+      userId: String(sessionRow.user_id),
+      uploadId: (sessionRow.upload_id as string | null) ?? null,
+      source: "schedule_share",
+      status: (sessionRow.status as SyncSession["status"]) ?? "running",
+      summary: (sessionRow.summary as Record<string, unknown>) ?? {},
+      error: (sessionRow.error as string | null) ?? null,
+      startedAt: String(sessionRow.started_at),
+      finishedAt: (sessionRow.finished_at as string | null) ?? null,
+    };
   },
 
   async getAccessRequestsForUpload(
@@ -982,7 +1415,28 @@ const supabaseSwaps: SwapService = {
       })
       .select()
       .single();
-    return toSwapRequest(assertNoError({ data, error }));
+    const createdRequest = toSwapRequest(assertNoError({ data, error }));
+
+    await Promise.all([
+      createInAppNotification({
+        userId: input.targetUserId,
+        type: "swap_request",
+        title: "Novo pedido de troca",
+        body: "Recebeste um novo pedido de troca para análise.",
+        entityType: "swap_request",
+        entityId: createdRequest.id,
+      }),
+      createInAppNotification({
+        userId: input.requesterUserId,
+        type: "swap_request",
+        title: "Pedido de troca enviado",
+        body: "O pedido foi enviado e aguarda resposta do colega.",
+        entityType: "swap_request",
+        entityId: createdRequest.id,
+      }),
+    ]);
+
+    return createdRequest;
   },
 
   async getSwapRequestsForUser(userId: string): Promise<SwapRequest[]> {
@@ -995,6 +1449,36 @@ const supabaseSwaps: SwapService = {
       .order("created_at", { ascending: false });
     if (error) throw error;
     return (data ?? []).map(toSwapRequest);
+  },
+
+  async getSwapRequestsForUserPaginated(
+    userId: string,
+    query: PaginatedQuery,
+  ): Promise<PaginatedResult<SwapRequest>> {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return toPaginatedResult({ items: [], page: 1, pageSize: 10, total: 0 });
+    }
+
+    const { page, pageSize } = normalizeQuery(query);
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, error, count } = await supabase
+      .from("swap_requests")
+      .select("*", { count: "exact" })
+      .or(`requester_user_id.eq.${userId},target_user_id.eq.${userId}`)
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (error) throw error;
+
+    return toPaginatedResult({
+      items: (data ?? []).map(toSwapRequest),
+      page,
+      pageSize,
+      total: count ?? 0,
+    });
   },
 
   async updateSwapStatus(
@@ -1017,6 +1501,32 @@ const supabaseSwaps: SwapService = {
     });
 
     assertSwapStatusTransition(existing.status, status);
+
+    // Canonical acceptance workflow: accepting a pending request triggers
+    // automatic HR email dispatch and status advancement handled by acceptSwapRequest.
+    if (status === "accepted" && existing.status === "pending") {
+      if (violations) {
+        const { data, error } = await supabase
+          .from("swap_requests")
+          .update({
+            rule_violation: violations.code,
+            violation_reason: violations.reason,
+          })
+          .eq("id", id)
+          .select()
+          .single();
+        return toSwapRequest(assertNoError({ data, error }));
+      }
+
+      if (!actorUserId) {
+        throw new Error("Utilizador responsável pela aceitação não informado.");
+      }
+
+      return supabaseSwaps.acceptSwapRequest(id, actorUserId, {
+        valid: true,
+        violations: [],
+      });
+    }
 
     const now = new Date().toISOString();
     const currentHistory = Array.isArray(existing.status_history)
@@ -1083,6 +1593,7 @@ const supabaseSwaps: SwapService = {
     if (!supabase) throw new Error("Supabase client unavailable");
 
     const now = new Date().toISOString();
+    const actorUserId = isUuid(targetUserId) ? targetUserId : null;
 
     // If validation failed, create update with violations but don't change status
     if (!validationResult.valid) {
@@ -1117,12 +1628,12 @@ const supabaseSwaps: SwapService = {
     const { data, error } = await supabase
       .from("swap_requests")
       .update({
-        status: "awaiting_hr_request",
+        status: "accepted",
         accepted_at: now,
         status_history: [
           ...currentHistory,
           {
-            status: "awaiting_hr_request",
+            status: "accepted",
             changed_at: now,
             changed_by_user_id: targetUserId,
           },
@@ -1131,7 +1642,29 @@ const supabaseSwaps: SwapService = {
       .eq("id", requestId)
       .select()
       .single();
-    return toSwapRequest(assertNoError({ data, error }));
+
+    const updatedRequest = toSwapRequest(assertNoError({ data, error }));
+
+    await Promise.all([
+      createInAppNotification({
+        userId: String(existing.requester_user_id),
+        type: "swap_request",
+        title: "Pedido de troca aceite",
+        body: "O pedido foi aceite. Use o envio manual para notificar o RH.",
+        entityType: "swap_request",
+        entityId: requestId,
+      }),
+      createInAppNotification({
+        userId: String(existing.target_user_id),
+        type: "swap_request",
+        title: "Pedido de troca aceite",
+        body: "Pedido aceite. Envie o email manual ao RH a partir do preview.",
+        entityType: "swap_request",
+        entityId: requestId,
+      }),
+    ]);
+
+    return updatedRequest;
   },
 
   async markHREmailSent(
@@ -1165,16 +1698,9 @@ const supabaseSwaps: SwapService = {
       throw new Error("Apenas participantes da troca podem enviar para RH.");
     }
 
-    const requesterHrSent =
-      (existing as { requester_hr_sent?: boolean }).requester_hr_sent ?? false;
-    const targetHrSent =
-      (existing as { target_hr_sent?: boolean }).target_hr_sent ?? false;
-
-    const nextRequesterHrSent =
-      actor === existing.requester_user_id ? true : requesterHrSent;
-    const nextTargetHrSent =
-      actor === existing.target_user_id ? true : targetHrSent;
-    const bothSent = nextRequesterHrSent && nextTargetHrSent;
+    const nextRequesterHrSent = true;
+    const nextTargetHrSent = true;
+    const bothSent = true;
 
     const patch: {
       hr_email_sent: boolean;
@@ -1189,12 +1715,12 @@ const supabaseSwaps: SwapService = {
       target_hr_sent: nextTargetHrSent,
     };
 
-    if (bothSent && existing.status !== "awaiting_hr_request") {
-      patch.status = "awaiting_hr_request";
+    if (bothSent && existing.status !== "submitted_to_hr") {
+      patch.status = "submitted_to_hr";
       patch.status_history = [
         ...currentHistory,
         {
-          status: "awaiting_hr_request",
+          status: "submitted_to_hr",
           changed_at: now,
           changed_by_user_id: actor,
         },
@@ -1291,6 +1817,87 @@ const supabaseSwaps: SwapService = {
       .single();
 
     return toSwapRequest(assertNoError({ data, error }));
+  },
+
+  async createHrDecisionLinks(input): Promise<{
+    approveUrl: string;
+    declineUrl: string;
+    expiresAt: string;
+  }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const safeBaseUrl =
+      input.baseUrl ??
+      `${window.location.origin}${import.meta.env.BASE_URL ?? "/"}`;
+
+    const { data, error } = await supabase.functions.invoke("swap-hr-actions", {
+      body: {
+        operation: "create",
+        request_id: input.requestId,
+        actor_user_id: input.actorUserId ?? null,
+        base_url: safeBaseUrl,
+        expires_in_hours: input.expiresInHours ?? 24,
+      },
+    });
+
+    if (error) {
+      throw new Error(await extractInvokeErrorMessage(error));
+    }
+
+    const response = data as {
+      approve_url?: string;
+      decline_url?: string;
+      expires_at?: string;
+    } | null;
+
+    if (
+      !response?.approve_url ||
+      !response?.decline_url ||
+      !response?.expires_at
+    ) {
+      throw new Error("Falha ao gerar links seguros de decisão para o RH.");
+    }
+
+    return {
+      approveUrl: response.approve_url,
+      declineUrl: response.decline_url,
+      expiresAt: response.expires_at,
+    };
+  },
+
+  async processHrDecisionAction(input): Promise<SwapRequest> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data, error } = await supabase.functions.invoke("swap-hr-actions", {
+      body: {
+        operation: "consume",
+        token: input.token,
+        action: input.action,
+        actor_email: input.actorEmail ?? null,
+      },
+    });
+
+    if (error) {
+      throw new Error(await extractInvokeErrorMessage(error));
+    }
+
+    const response = data as { request?: { id?: string } } | null;
+    const requestId = response?.request?.id;
+    if (!requestId) {
+      throw new Error("Resposta inválida ao processar decisão do RH.");
+    }
+
+    const { data: updatedRow, error: updatedError } = await supabase
+      .from("swap_requests")
+      .select("*")
+      .eq("id", requestId)
+      .single();
+
+    return toSwapRequest(
+      assertNoError({ data: updatedRow, error: updatedError }),
+    );
   },
 
   async applySwap(requestId: string): Promise<SwapRequest> {
@@ -1424,6 +2031,165 @@ const supabaseLeave: LeaveService = {
       .order("requested_start_date", { ascending: false });
     if (error) throw error;
     return (data ?? []).map(toLeaveRequest);
+  },
+
+  async getLeaveRequestsForUserPaginated(
+    userId: string,
+    query: PaginatedQuery,
+  ): Promise<PaginatedResult<LeaveRequest>> {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return toPaginatedResult({ items: [], page: 1, pageSize: 10, total: 0 });
+    }
+
+    const { page, pageSize } = normalizeQuery(query);
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, error, count } = await supabase
+      .from("leave_requests")
+      .select("*", { count: "exact" })
+      .eq("user_id", userId)
+      .order("requested_start_date", { ascending: false })
+      .range(from, to);
+
+    if (error) throw error;
+
+    return toPaginatedResult({
+      items: (data ?? []).map(toLeaveRequest),
+      page,
+      pageSize,
+      total: count ?? 0,
+    });
+  },
+
+  async createLeaveEmailPreview(input): Promise<EmailPreviewPayload> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data, error } = await supabase
+      .from("leave_requests")
+      .select("*")
+      .eq("id", input.leaveRequestId)
+      .single();
+
+    if (error) throw error;
+    const leave = toLeaveRequest(data);
+
+    const subject = `[ShiftSync] Pedido de ${leave.type} (${leave.startDate} a ${leave.endDate})`;
+    const lines = [
+      "Bom dia RH,",
+      "",
+      "Segue pedido de ausência para análise:",
+      `Colaborador: ${input.employeeName ?? "N/D"} (${input.employeeCode ?? "N/D"})`,
+      `Tipo: ${leave.type}`,
+      `Início: ${leave.startDate}`,
+      `Fim: ${leave.endDate}`,
+      `Observações: ${leave.notes ?? "-"}`,
+      "",
+      "Obrigado.",
+    ];
+
+    return {
+      subject,
+      to: [input.hrEmail],
+      cc: input.ccEmails ?? [],
+      body: lines.join("\n"),
+      attachments: (input.attachments ?? []).map((item) => ({
+        fileName: item.fileName,
+        fileType: item.fileType ?? null,
+        fileSize: item.fileSize ?? null,
+      })),
+    };
+  },
+
+  async confirmLeaveSubmission(input): Promise<LeaveRequest> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    if (input.attachments?.length) {
+      await (supabase as any).from("leave_request_attachments").insert(
+        input.attachments.map((file) => ({
+          leave_request_id: input.leaveRequestId,
+          file_name: file.fileName,
+          file_type: file.fileType ?? null,
+          file_size: file.fileSize ?? null,
+          storage_path: file.storagePath ?? null,
+        })),
+      );
+    }
+
+    await (supabase as any).from("email_deliveries").insert({
+      workflow_type: "leave_request",
+      target_id: input.leaveRequestId,
+      to_email: input.emailPreview.to[0] ?? null,
+      cc_emails: input.emailPreview.cc,
+      status: "queued",
+      metadata: {
+        subject: input.emailPreview.subject,
+        body: input.emailPreview.body,
+        attachments: input.emailPreview.attachments,
+      },
+      created_at: new Date().toISOString(),
+    });
+
+    const now = new Date().toISOString();
+    const dueAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: updatedRow, error: updateError } = await supabase
+      .from("leave_requests")
+      .update({
+        status: "pending",
+        sent_to_hr_at: now,
+        decision_due_at: dueAt,
+      })
+      .eq("id", input.leaveRequestId)
+      .select("*")
+      .single();
+
+    const updatedLeave = toLeaveRequest(
+      assertNoError({ data: updatedRow, error: updateError }),
+    );
+
+    await createInAppNotification({
+      userId: updatedLeave.userId,
+      type: "leave_request",
+      title: "Pedido de ausência enviado",
+      body: "O pedido foi enviado ao RH e aguarda decisão.",
+      entityType: "leave_request",
+      entityId: updatedLeave.id,
+    });
+
+    return updatedLeave;
+  },
+
+  async getAttachmentsByLeaveRequest(
+    leaveRequestId: string,
+  ): Promise<LeaveRequestAttachment[]> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
+
+    const { data, error } = await (supabase as any)
+      .from("leave_request_attachments")
+      .select("*")
+      .eq("leave_request_id", leaveRequestId)
+      .order("uploaded_at", { ascending: false });
+
+    if (error) {
+      throw new Error(getErrorMessage(error));
+    }
+
+    return (data ?? []).map((row: Record<string, unknown>) => ({
+      id: String(row.id),
+      leaveRequestId: String(row.leave_request_id),
+      userId: String(row.user_id ?? ""),
+      fileName: String(row.file_name),
+      fileType: (row.file_type as string | null) ?? null,
+      fileSize: (row.file_size as number | null) ?? null,
+      storagePath: (row.storage_path as string | null) ?? null,
+      uploadedAt: String(
+        row.uploaded_at ?? row.created_at ?? new Date().toISOString(),
+      ),
+    }));
   },
 
   async markSentToHR(id: string): Promise<LeaveRequest> {
@@ -1563,7 +2329,6 @@ const supabaseCalendar: CalendarSyncService = {
     calendarId: string,
   ): Promise<{ created: number; updated: number; deleted: number }> {
     // Legacy path kept for backward compatibility. Prefer runSync for new callers.
-    const { GoogleCalendarService } = await import("@/lib/google-calendar");
     const service = new GoogleCalendarService(accessToken);
     let created = 0;
     let updated = 0;
@@ -1797,6 +2562,368 @@ const supabaseNotifications: NotificationService = {
     //   await supabase?.functions.invoke("notify-leave-status", { body: payload });
     console.info("[NotificationService] notifyLeaveStatusChange", payload);
   },
+
+  async backfillSwapRequestNotifications(userId: string): Promise<number> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return 0;
+
+    const { data: requests, error: requestsError } = await (supabase as any)
+      .from("swap_requests")
+      .select("id, requester_user_id, target_user_id, created_at")
+      .or(`requester_user_id.eq.${userId},target_user_id.eq.${userId}`)
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    if (requestsError) {
+      throw new Error(getErrorMessage(requestsError));
+    }
+
+    const candidateRequests = (requests ?? []) as Array<{
+      id: string;
+      requester_user_id: string;
+      target_user_id: string;
+      created_at?: string | null;
+    }>;
+
+    if (candidateRequests.length === 0) {
+      return 0;
+    }
+
+    const requestIds = candidateRequests.map((request) => String(request.id));
+
+    const { data: existingRows, error: existingError } = await (supabase as any)
+      .from("notifications")
+      .select("entity_id")
+      .eq("user_id", userId)
+      .eq("entity_type", "swap_request")
+      .eq("type", "swap_request")
+      .in("entity_id", requestIds);
+
+    if (existingError) {
+      throw new Error(getErrorMessage(existingError));
+    }
+
+    const existingEntityIds = new Set(
+      (existingRows ?? []).map((row: Record<string, unknown>) =>
+        String(row.entity_id),
+      ),
+    );
+
+    const rowsToInsert = candidateRequests
+      .filter((request) => !existingEntityIds.has(String(request.id)))
+      .map((request) => {
+        const isTargetUser = String(request.target_user_id) === userId;
+        return {
+          user_id: userId,
+          type: "swap_request",
+          title: isTargetUser
+            ? "Novo pedido de troca"
+            : "Pedido de troca enviado",
+          body: isTargetUser
+            ? "Recebeste um novo pedido de troca para análise."
+            : "O pedido foi enviado e aguarda resposta do colega.",
+          entity_type: "swap_request",
+          entity_id: request.id,
+          created_at: request.created_at ?? new Date().toISOString(),
+        };
+      });
+
+    if (rowsToInsert.length === 0) {
+      return 0;
+    }
+
+    const { error: insertError } = await (supabase as any)
+      .from("notifications")
+      .insert(rowsToInsert);
+
+    if (insertError) {
+      throw new Error(getErrorMessage(insertError));
+    }
+
+    return rowsToInsert.length;
+  },
+
+  async listNotifications(
+    userId: string,
+    query: PaginatedQuery,
+  ): Promise<PaginatedResult<AppNotification>> {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return toPaginatedResult({ items: [], page: 1, pageSize: 10, total: 0 });
+    }
+
+    const { page, pageSize } = normalizeQuery(query);
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, error, count } = await (supabase as any)
+      .from("notifications")
+      .select("*", { count: "exact" })
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (error) throw new Error(getErrorMessage(error));
+
+    const items: AppNotification[] = (data ?? []).map(
+      (row: Record<string, unknown>) => ({
+        id: String(row.id),
+        userId: String(row.user_id),
+        type: (row.type as AppNotification["type"]) ?? "reminder",
+        title: String(row.title ?? "Notificação"),
+        body: String(row.body ?? ""),
+        link: (row.link as string | null) ?? null,
+        meta: (row.meta as Record<string, unknown>) ?? {},
+        isRead:
+          typeof row.is_read === "boolean"
+            ? Boolean(row.is_read)
+            : Boolean(row.read_at),
+        readAt: (row.read_at as string | null) ?? null,
+        createdAt: String(row.created_at),
+      }),
+    );
+
+    return toPaginatedResult({
+      items,
+      page,
+      pageSize,
+      total: count ?? 0,
+    });
+  },
+
+  async markNotificationAsRead(notificationId: string): Promise<void> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { error } = await (supabase as any)
+      .from("notifications")
+      .update({ read_at: new Date().toISOString() })
+      .eq("id", notificationId);
+
+    if (error) {
+      throw new Error(getErrorMessage(error));
+    }
+  },
+
+  async markAllNotificationsAsRead(userId: string): Promise<void> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { error } = await (supabase as any)
+      .from("notifications")
+      .update({ read_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .is("read_at", null);
+
+    if (error) {
+      throw new Error(getErrorMessage(error));
+    }
+  },
+
+  async getUnreadCount(userId: string): Promise<number> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return 0;
+
+    const { count, error } = await (supabase as any)
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .is("read_at", null);
+
+    if (error) {
+      throw new Error(getErrorMessage(error));
+    }
+
+    return Number(count ?? 0);
+  },
+};
+
+const supabaseWorkflow: WorkflowService = {
+  async createActionToken(input): Promise<WorkflowActionToken> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const token = createSecureToken();
+    const expiresAt = new Date(
+      Date.now() + input.expiresInMinutes * 60 * 1000,
+    ).toISOString();
+
+    const { data, error } = await (supabase as any)
+      .from("action_tokens")
+      .insert({
+        workflow_type: input.workflowType,
+        target_id: input.targetId,
+        token,
+        expires_at: expiresAt,
+      })
+      .select("*")
+      .single();
+
+    if (error) throw new Error(getErrorMessage(error));
+
+    return {
+      id: String(data.id),
+      workflowType: "swap_hr_decision",
+      targetId: String(data.target_id),
+      token: String(data.token),
+      expiresAt: String(data.expires_at),
+      consumedAt: (data.consumed_at as string | null) ?? null,
+      consumedBy: (data.consumed_by as string | null) ?? null,
+      action: (data.action as "approve" | "decline" | null) ?? null,
+      createdAt: String(data.created_at ?? new Date().toISOString()),
+    };
+  },
+
+  async validateActionToken(
+    token: string,
+  ): Promise<WorkflowActionValidationResult> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data, error } = await (supabase as any)
+      .from("action_tokens")
+      .select("*")
+      .eq("token", token)
+      .maybeSingle();
+
+    if (error) throw new Error(getErrorMessage(error));
+    if (!data) return { valid: false, reason: "token_not_found" };
+    if (data.consumed_at) return { valid: false, reason: "already_consumed" };
+    if (new Date(String(data.expires_at)).getTime() < Date.now()) {
+      return { valid: false, reason: "expired" };
+    }
+
+    return {
+      valid: true,
+      tokenId: String(data.id),
+      targetId: String(data.target_id),
+      workflowType: "swap_hr_decision",
+    };
+  },
+
+  async consumeActionToken(input): Promise<WorkflowActionValidationResult> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data, error } = await (supabase as any)
+      .from("action_tokens")
+      .select("*")
+      .eq("token", input.token)
+      .maybeSingle();
+
+    if (error) throw new Error(getErrorMessage(error));
+    if (!data) return { valid: false, reason: "token_not_found" };
+    if (data.consumed_at) return { valid: false, reason: "already_consumed" };
+    if (new Date(String(data.expires_at)).getTime() < Date.now()) {
+      return { valid: false, reason: "expired" };
+    }
+
+    const validation: WorkflowActionValidationResult = {
+      valid: true,
+      tokenId: String(data.id),
+      targetId: String(data.target_id),
+      workflowType: "swap_hr_decision",
+    };
+    if (!validation.valid) return validation;
+
+    await (supabase as any)
+      .from("action_tokens")
+      .update({
+        consumed_at: new Date().toISOString(),
+        consumed_by: input.actorEmail ?? null,
+        action: input.action,
+      })
+      .eq("id", validation.tokenId);
+
+    return {
+      ...validation,
+      valid: true,
+    };
+  },
+};
+
+const supabaseReminders: ReminderService = {
+  async createReminder(input): Promise<ReminderJob> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data, error } = await (supabase as any)
+      .from("reminder_jobs")
+      .insert({
+        user_id: input.userId,
+        type: input.type,
+        status: "pending",
+        trigger_at: input.triggerAt,
+        payload: input.payload ?? {},
+      })
+      .select("*")
+      .single();
+
+    if (error) throw new Error(getErrorMessage(error));
+
+    await createInAppNotification({
+      userId: input.userId,
+      type: "reminder",
+      title: "Lembrete agendado",
+      body: "Foi agendado um lembrete para pedidos pontuais de dias de folga.",
+      entityType: "reminder_job",
+      entityId: String(data.id),
+    });
+
+    return {
+      id: String(data.id),
+      userId: String(data.user_id),
+      type: "days_off_selection",
+      status: (data.status as ReminderJob["status"]) ?? "pending",
+      triggerAt: String(data.trigger_at),
+      payload: (data.payload as Record<string, unknown>) ?? {},
+      sentAt: (data.sent_at as string | null) ?? null,
+      createdAt: String(data.created_at ?? new Date().toISOString()),
+    };
+  },
+
+  async getRemindersByUser(
+    userId: string,
+    query: PaginatedQuery,
+  ): Promise<PaginatedResult<ReminderJob>> {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return toPaginatedResult({ items: [], page: 1, pageSize: 10, total: 0 });
+    }
+
+    const { page, pageSize } = normalizeQuery(query);
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, error, count } = await (supabase as any)
+      .from("reminder_jobs")
+      .select("*", { count: "exact" })
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (error) throw new Error(getErrorMessage(error));
+
+    const items: ReminderJob[] = (data ?? []).map(
+      (row: Record<string, unknown>) => ({
+        id: String(row.id),
+        userId: String(row.user_id),
+        type: "days_off_selection",
+        status: (row.status as ReminderJob["status"]) ?? "pending",
+        triggerAt: String(row.trigger_at),
+        payload: (row.payload as Record<string, unknown>) ?? {},
+        sentAt: (row.sent_at as string | null) ?? null,
+        createdAt: String(row.created_at ?? new Date().toISOString()),
+      }),
+    );
+
+    return toPaginatedResult({
+      items,
+      page,
+      pageSize,
+      total: count ?? 0,
+    });
+  },
 };
 
 // ── Export full provider ───────────────────────────────────────────────────
@@ -1810,4 +2937,6 @@ export class SupabaseProvider implements BackendServices {
   leave = supabaseLeave;
   calendar = supabaseCalendar;
   notifications = supabaseNotifications;
+  workflow = supabaseWorkflow;
+  reminders = supabaseReminders;
 }

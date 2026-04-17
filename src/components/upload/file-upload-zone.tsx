@@ -33,6 +33,7 @@ import {
   ConstraintViolation,
   validateScheduleConstraints,
 } from "@/features/swaps/services/swap-constraints";
+import { LoadingState } from "@/components/ui/loading-state";
 
 interface FileUploadZoneProps {
   onFileProcessed: (
@@ -458,9 +459,11 @@ export function FileUploadZone({
               {uploading && (
                 <div className="mt-4 space-y-2">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">
-                      A processar...
-                    </span>
+                    <LoadingState
+                      inline
+                      message="A processar..."
+                      className="text-muted-foreground"
+                    />
                     <span className="font-semibold">{progress}%</span>
                   </div>
                   <Progress value={progress} className="h-2" />

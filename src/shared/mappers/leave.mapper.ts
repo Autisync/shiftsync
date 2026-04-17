@@ -29,6 +29,21 @@ export function toLeaveRequest(row: DbLeaveRow): LeaveRequest {
     googleEventId: row.google_event_id,
     leaveUid: row.leave_uid,
     lastSyncedCalendarId: row.last_synced_calendar_id,
+    noticeDaysRequested:
+      (row as unknown as { notice_days_requested?: number | null })
+        .notice_days_requested ?? null,
+    noticePolicyDays:
+      (row as unknown as { notice_policy_days?: number | null })
+        .notice_policy_days ?? null,
+    noticePolicyBreached:
+      (row as unknown as { notice_policy_breached?: boolean | null })
+        .notice_policy_breached ?? false,
+    reminderScheduledAt:
+      (row as unknown as { reminder_scheduled_at?: string | null })
+        .reminder_scheduled_at ?? null,
+    reminderSentAt:
+      (row as unknown as { reminder_sent_at?: string | null })
+        .reminder_sent_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

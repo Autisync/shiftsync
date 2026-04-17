@@ -6,6 +6,7 @@ import CookieBanner from "@/components/cookies/CookieBanner";
 import CookiePreferencesDialog from "@/components/cookies/CookiePreferencesDialog";
 import ConsentGatedAnalytics from "@/components/cookies/ConsentGatedAnalytics";
 import { VersionUpdateBanner } from "@/components/VersionUpdateBanner";
+import { LoadingState } from "@/components/ui/loading-state";
 
 const Home = lazy(() => import("./components/home"));
 const LandingPage = lazy(() => import("./components/landingpage"));
@@ -84,7 +85,9 @@ function App() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-autisync-surface" aria-hidden="true" />
+        <div className="min-h-screen bg-autisync-surface flex items-center justify-center">
+          <LoadingState message="A carregar aplicação..." />
+        </div>
       }
     >
       <>

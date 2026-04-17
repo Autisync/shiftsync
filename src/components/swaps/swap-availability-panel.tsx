@@ -29,7 +29,6 @@ import {
   getAllowedActionsForUser,
   getSwapStatusBadgeClass,
 } from "@/features/swaps/services/swap-workflow";
-import { validateSwapConstraints } from "@/features/swaps/services/swap-constraints";
 import {
   generateOutlookComposeLink,
   generateSwapEmailTemplate,
@@ -37,6 +36,11 @@ import {
   generateMailtoLink,
 } from "@/lib/swap-email-template";
 import { HRSettingsModal } from "@/components/swaps/hr-settings-modal";
+import {
+  LoadingListSkeleton,
+  LoadingState,
+} from "@/components/ui/loading-state";
+import { toast } from "sonner";
 
 interface SwapAvailabilityPanelProps {
   userId: string;
@@ -372,36 +376,17 @@ export function SwapAvailabilityPanel({
     setError(null);
 
     try {
-      // Load both users' full shifts for constraint validation
-      const requesterShifts = await api.shifts.getShiftsForUser(
-        request.requesterUserId,
+      await api.swaps.updateSwapStatus(request.id, "accepted", userId);
+      setFeedback(
+        "Pedido aceite com sucesso. Agora envie manualmente para RH.",
       );
-      const targetShifts = await api.shifts.getShiftsForUser(
-        request.targetUserId,
-      );
-
-      // Validate constraints
-      const validation = validateSwapConstraints({
-        requesterShifts,
-        targetShifts,
-        ownShiftId: request.requesterShiftId,
-        targetShiftId: request.targetShiftId,
-      });
-
-      // Accept swap (with or without violations; violations are stored)
-      await api.swaps.acceptSwapRequest(request.id, userId, validation);
-
-      if (validation.valid) {
-        setFeedback("Pedido aceite com sucesso!");
-      } else {
-        setFeedback(
-          `Aceite com violacoes de restricoes: ${validation.violations[0]?.message || "Desconhecida"}`,
-        );
-      }
+      toast.success("Pedido aceite. Envio ao RH agora é manual.");
 
       await loadData();
     } catch (err) {
-      setError(getErrorMessage(err));
+      const message = getErrorMessage(err);
+      setError(message);
+      toast.error(`Falha ao aceitar pedido: ${message}`);
     } finally {
       setBusyRequestId(null);
     }
@@ -445,6 +430,13 @@ export function SwapAvailabilityPanel({
         throw new Error("Requester shift not found");
       }
 
+      const decisionLinks = await api.swaps.createHrDecisionLinks({
+        requestId: request.id,
+        actorUserId: userId,
+        baseUrl: `${window.location.origin}${import.meta.env.BASE_URL ?? "/"}`,
+        expiresInHours: 24,
+      });
+
       // Generate email
       const template = generateSwapEmailTemplate({
         request,
@@ -454,6 +446,9 @@ export function SwapAvailabilityPanel({
         targetShift,
         hrEmail: hrSettings.hrEmail,
         ccEmails: hrSettings.ccEmails,
+        approveUrl: decisionLinks.approveUrl,
+        declineUrl: decisionLinks.declineUrl,
+        expiresAt: decisionLinks.expiresAt,
       });
 
       const mailto = generateMailtoLink(
@@ -719,7 +714,7 @@ export function SwapAvailabilityPanel({
                       void onAcceptSwap(request);
                     }}
                   >
-                    {"Aceitar"}
+                    {"Aceitar pedido"}
                   </Button>
                 );
               }
@@ -833,14 +828,6 @@ export function SwapAvailabilityPanel({
             e criado quando clicar em "Enviar pedido de troca".
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => setHrSettingsOpen(true)}
-          className="ml-2"
-        >
-          {"Configurar RH"}
-        </Button>
       </div>
 
       {pendingReceivedRequests.length > 0 && (
@@ -880,9 +867,10 @@ export function SwapAvailabilityPanel({
         </div>
 
         {loading ? (
-          <p className="text-sm text-slate-600">
-            A carregar disponibilidades...
-          </p>
+          <div className="space-y-3">
+            <LoadingState message="A carregar disponibilidades..." inline />
+            <LoadingListSkeleton rows={3} />
+          </div>
         ) : activeOwnShifts.length === 0 ? (
           <p className="text-sm text-slate-600">
             Sem turnos disponiveis para gerir trocas.
@@ -934,7 +922,7 @@ export function SwapAvailabilityPanel({
         </div>
 
         {loading ? (
-          <p className="text-sm text-slate-600">A calcular matches...</p>
+          <LoadingState message="A calcular matches..." />
         ) : matches.length === 0 ? (
           <p className="text-sm text-slate-600">Sem matches no momento.</p>
         ) : (
@@ -993,7 +981,10 @@ export function SwapAvailabilityPanel({
         </div>
 
         {loading ? (
-          <p className="text-sm text-slate-600">A carregar pedidos...</p>
+          <div className="space-y-3">
+            <LoadingState message="A carregar pedidos..." inline />
+            <LoadingListSkeleton rows={2} />
+          </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className="space-y-2">

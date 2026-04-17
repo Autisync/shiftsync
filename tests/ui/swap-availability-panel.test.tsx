@@ -105,6 +105,9 @@ describe("SwapAvailabilityPanel", () => {
         getHRSettings: vi.fn().mockResolvedValue(null),
         saveHRSettings: vi.fn(),
       },
+      users: {
+        getUserProfile: vi.fn().mockResolvedValue(null),
+      },
     };
 
     render(
@@ -151,6 +154,9 @@ describe("SwapAvailabilityPanel", () => {
         getHRSettings: vi.fn().mockResolvedValue(null),
         saveHRSettings: vi.fn(),
       },
+      users: {
+        getUserProfile: vi.fn().mockResolvedValue(null),
+      },
     };
 
     render(
@@ -165,7 +171,7 @@ describe("SwapAvailabilityPanel", () => {
   });
 
   it("shows target inbox actions and updates status", async () => {
-    const acceptSwapRequest = vi.fn().mockResolvedValue(
+    const updateSwapStatus = vi.fn().mockResolvedValue(
       makeRequest({
         id: "r-2",
         requesterUserId: "u-other",
@@ -220,8 +226,8 @@ describe("SwapAvailabilityPanel", () => {
         openAvailability: vi.fn(),
         closeAvailability: vi.fn(),
         createSwapRequest: vi.fn(),
-        updateSwapStatus: vi.fn(),
-        acceptSwapRequest,
+        updateSwapStatus,
+        acceptSwapRequest: vi.fn(),
         markHREmailSent: vi.fn(),
         applySwap: vi.fn(),
         getHRSettings: vi.fn().mockResolvedValue(null),
@@ -237,15 +243,13 @@ describe("SwapAvailabilityPanel", () => {
       />,
     );
 
-    const acceptButton = await screen.findByRole("button", { name: "Aceitar" });
+    const acceptButton = await screen.findByRole("button", {
+      name: "Aceitar pedido",
+    });
     fireEvent.click(acceptButton);
 
     await waitFor(() => {
-      expect(acceptSwapRequest).toHaveBeenCalledWith(
-        "r-2",
-        "u-own",
-        expect.objectContaining({ valid: expect.any(Boolean) }),
-      );
+      expect(updateSwapStatus).toHaveBeenCalledWith("r-2", "accepted", "u-own");
     });
   });
 
@@ -287,6 +291,9 @@ describe("SwapAvailabilityPanel", () => {
         applySwap: vi.fn(),
         getHRSettings: vi.fn().mockResolvedValue(null),
         saveHRSettings: vi.fn(),
+      },
+      users: {
+        getUserProfile: vi.fn().mockResolvedValue(null),
       },
     };
 

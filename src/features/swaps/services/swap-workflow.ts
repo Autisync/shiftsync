@@ -78,7 +78,7 @@ export function getAllowedActionsForUser(
   userId: string,
 ): SwapRequestStatus[] {
   if (request.status === "pending" && request.targetUserId === userId) {
-    return ["awaiting_hr_request", "rejected"];
+    return ["accepted", "rejected"];
   }
 
   if (
@@ -100,10 +100,10 @@ export function getAllowedActionsForUser(
 
 export function getActionLabel(status: SwapRequestStatus): string {
   switch (status) {
-    case "awaiting_hr_request":
-      return "Aceitar";
     case "accepted":
       return "Aceitar";
+    case "awaiting_hr_request":
+      return "Aguardando RH";
     case "submitted_to_hr":
       return "Enviar para RH";
     case "approved":

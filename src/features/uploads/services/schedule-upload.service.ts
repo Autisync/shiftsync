@@ -9,6 +9,58 @@ export interface UploadPersistenceResult {
   resolvedSelectedShifts: ShiftData[];
 }
 
+type UploadTrustDraft = {
+  trustLevel: "high" | "medium" | "low";
+  trustScore: number;
+  trustReason: string;
+  normalizedCoverageStart: string | null;
+  normalizedCoverageEnd: string | null;
+  conflictsCount: number;
+};
+
+function normalizedWindowKeysFromSelectedShifts(
+  shifts: ShiftData[],
+): Set<string> {
+  return new Set(
+    shifts.map((shift) =>
+      [
+        toIsoDate(shift.date),
+        normalizeTime(shift.startTime),
+        normalizeTime(shift.endTime),
+      ].join("|"),
+    ),
+  );
+}
+
+function normalizedWindowKeysFromUploadMeta(
+  uploadMeta: Record<string, unknown>,
+): Set<string> {
+  const payload = Array.isArray(uploadMeta.parsed_payload)
+    ? (uploadMeta.parsed_payload as Array<Record<string, unknown>>)
+    : [];
+
+  return new Set(
+    payload.map((row) => {
+      const date = String(row.date ?? "");
+      const start =
+        typeof row.starts_at === "string" ? hhmmFromIso(row.starts_at) : "";
+      const end =
+        typeof row.ends_at === "string" ? hhmmFromIso(row.ends_at) : "";
+      return [date, start, end].join("|");
+    }),
+  );
+}
+
+function windowSimilarityScore(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let intersection = 0;
+  for (const key of a) {
+    if (b.has(key)) intersection++;
+  }
+  const union = new Set([...a, ...b]).size;
+  return union === 0 ? 0 : intersection / union;
+}
+
 function toIsoDate(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
@@ -650,6 +702,127 @@ export async function persistUploadMetadata(params: {
 }): Promise<UploadPersistenceResult> {
   const backend = getBackend();
   const fileHash = await sha256Hex(params.file);
+  const selectedShifts = params.selectedEmployeeShifts ?? [];
+
+  const trustDraft: UploadTrustDraft = {
+    trustLevel: "medium",
+    trustScore: 65,
+    trustReason: "Primeiro upload para este ficheiro/cobertura.",
+    normalizedCoverageStart: null,
+    normalizedCoverageEnd: null,
+    conflictsCount: 0,
+  };
+
+  if (selectedShifts.length > 0) {
+    const shiftDates = selectedShifts.map((shift) => toIsoDate(shift.date));
+    const coverage = monthRangeFromDates(shiftDates);
+    trustDraft.normalizedCoverageStart = coverage.start;
+    trustDraft.normalizedCoverageEnd = coverage.end;
+
+    try {
+      const previousUploads = await backend.uploads.getUploadsByUser(
+        params.userId,
+      );
+      const currentWindowKeys =
+        normalizedWindowKeysFromSelectedShifts(selectedShifts);
+      const selectedShiftCount = selectedShifts.length;
+      const selectedEmployee = normalizeText(params.selectedEmployeeName ?? "");
+
+      const sameHashCount = previousUploads.filter(
+        (row) => row.fileHash === fileHash,
+      ).length;
+      const sameCoverageCount = previousUploads.filter((row) => {
+        if (!row.normalizedCoverageStart || !row.normalizedCoverageEnd) {
+          return false;
+        }
+        return (
+          row.normalizedCoverageStart === coverage.start &&
+          row.normalizedCoverageEnd === coverage.end
+        );
+      }).length;
+
+      const sameShiftCount = previousUploads.filter((row) => {
+        const count = Number(
+          (row.metadata?.selected_shift_count as number | null) ?? 0,
+        );
+        return count > 0 && count === selectedShiftCount;
+      }).length;
+
+      const sameEmployeeCount = previousUploads.filter((row) => {
+        const employee = normalizeText(
+          String(row.metadata?.selected_employee_name ?? ""),
+        );
+        return selectedEmployee.length > 0 && employee === selectedEmployee;
+      }).length;
+
+      const corroboratingUploads = previousUploads.filter((row) => {
+        const isCoverageMatch =
+          row.normalizedCoverageStart === coverage.start &&
+          row.normalizedCoverageEnd === coverage.end;
+        return isCoverageMatch && row.fileHash !== fileHash;
+      }).length;
+
+      const bestWindowSimilarity = previousUploads.reduce((best, row) => {
+        const keys = normalizedWindowKeysFromUploadMeta(row.metadata ?? {});
+        return Math.max(best, windowSimilarityScore(currentWindowKeys, keys));
+      }, 0);
+
+      const existingShifts = await backend.shifts.getShiftsForUser(
+        params.userId,
+      );
+      const existingInCoverage = existingShifts.filter((row) => {
+        if (row.status !== "active") return false;
+        return row.date >= coverage.start && row.date <= coverage.end;
+      });
+      const existingWindowKeys = new Set(
+        existingInCoverage.map((row) =>
+          [row.date, hhmmFromIso(row.startsAt), hhmmFromIso(row.endsAt)].join(
+            "|",
+          ),
+        ),
+      );
+
+      let conflictsCount = 0;
+      for (const key of existingWindowKeys) {
+        if (!currentWindowKeys.has(key)) {
+          conflictsCount += 1;
+        }
+      }
+      trustDraft.conflictsCount = conflictsCount;
+
+      let score = 20;
+      if (sameHashCount > 0) score = 100;
+      if (sameHashCount === 0) {
+        if (sameCoverageCount > 0) score += 20;
+        if (sameShiftCount > 0) score += 10;
+        if (sameEmployeeCount > 0) score += 10;
+        score += Math.round(bestWindowSimilarity * 30);
+        score += Math.min(20, corroboratingUploads * 10);
+        score -= Math.min(40, conflictsCount * 10);
+      }
+
+      score = Math.max(20, Math.min(100, score));
+      trustDraft.trustScore = score;
+      trustDraft.trustLevel =
+        score >= 80 ? "high" : score >= 50 ? "medium" : "low";
+
+      if (score === 100) {
+        trustDraft.trustReason =
+          "Hash exato confirmado para o mesmo utilizador (100%).";
+      } else if (score >= 80) {
+        trustDraft.trustReason =
+          "Cobertura e estrutura de turnos corroboradas por uploads anteriores.";
+      } else if (score >= 50) {
+        trustDraft.trustReason =
+          "Consistência parcial: cobertura semelhante com algumas divergências.";
+      } else {
+        trustDraft.trustReason =
+          "Upload com conflitos relevantes face ao estado atual. Rever antes de sincronizar.";
+      }
+    } catch {
+      // Keep conservative defaults if trust context lookup fails.
+    }
+  }
 
   const upload = await backend.uploads.createUpload({
     uploaderUserId: params.userId,
@@ -661,7 +834,13 @@ export async function persistUploadMetadata(params: {
       file_size: params.file.size,
       mime_type: params.file.type,
       selected_employee_name: params.selectedEmployeeName ?? null,
-      selected_shift_count: params.selectedEmployeeShifts?.length ?? 0,
+      selected_shift_count: selectedShifts.length,
+      normalized_coverage_start: trustDraft.normalizedCoverageStart,
+      normalized_coverage_end: trustDraft.normalizedCoverageEnd,
+      trust_level: trustDraft.trustLevel,
+      trust_score: trustDraft.trustScore,
+      trust_reason: trustDraft.trustReason,
+      conflicts_count: trustDraft.conflictsCount,
       parsed_payload: flattenParsedPayload(params.parsedResult),
     },
   });
@@ -669,7 +848,7 @@ export async function persistUploadMetadata(params: {
   const resolvedSelectedShifts = await upsertParsedShifts({
     userId: params.userId,
     uploadId: upload.id,
-    selectedEmployeeShifts: params.selectedEmployeeShifts ?? [],
+    selectedEmployeeShifts: selectedShifts,
   });
 
   return { uploadId: upload.id, fileHash, resolvedSelectedShifts };

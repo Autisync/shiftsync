@@ -94,6 +94,11 @@ export interface SwapRequest {
   violationReason: string | null;
   hrEmailSent: boolean;
   calendarApplied: boolean;
+  hrDecisionTokenExpiresAt?: string | null;
+  hrDecisionActionedAt?: string | null;
+  hrDecisionAction?: "approve" | "decline" | null;
+  hrDecisionBy?: string | null;
+  hrDecisionReason?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -153,6 +158,11 @@ export interface LeaveRequest {
   leaveUid: string | null;
   /** Calendar id that was last synced. */
   lastSyncedCalendarId: string | null;
+  noticeDaysRequested?: number | null;
+  noticePolicyDays?: number | null;
+  noticePolicyBreached?: boolean;
+  reminderScheduledAt?: string | null;
+  reminderSentAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -165,7 +175,49 @@ export interface ScheduleUpload {
   fileHash: string;
   consentToShare: boolean;
   metadata: Record<string, unknown>;
+  processingStatus?:
+    | "uploaded"
+    | "importing"
+    | "persisted"
+    | "trust_assessed"
+    | "ready_to_sync"
+    | "syncing"
+    | "synced"
+    | "failed";
+  processingError?: string | null;
+  normalizedCoverageStart?: string | null;
+  normalizedCoverageEnd?: string | null;
+  trustLevel?: "low" | "medium" | "high" | null;
+  trustScore?: number | null;
+  trustReason?: string | null;
+  selectedForSyncAt?: string | null;
   uploadedAt: string;
+}
+
+export interface UploadTrustAssessment {
+  id: string;
+  uploadId: string;
+  userId: string;
+  normalizedCoverageStart: string | null;
+  normalizedCoverageEnd: string | null;
+  duplicateCoverageCount: number;
+  trustScore: number;
+  trustLevel: "low" | "medium" | "high";
+  trustReason: string;
+  conflictsCount: number;
+  assessedAt: string;
+}
+
+export interface SyncSession {
+  id: string;
+  userId: string;
+  uploadId: string | null;
+  source: "upload" | "swap" | "leave" | "schedule_share";
+  status: "pending" | "running" | "completed" | "failed";
+  summary: Record<string, unknown>;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
 }
 
 // ── Schedule access requests ───────────────────────────────────────────────
@@ -182,6 +234,74 @@ export interface ScheduleAccessRequest {
   reviewedByUserId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface LeaveRequestAttachment {
+  id: string;
+  leaveRequestId: string;
+  userId: string;
+  fileName: string;
+  fileType: string | null;
+  fileSize: number | null;
+  storagePath: string | null;
+  uploadedAt: string;
+}
+
+export interface AppNotification {
+  id: string;
+  userId: string;
+  type:
+    | "swap_request"
+    | "swap_hr_decision"
+    | "leave_request"
+    | "upload_processing"
+    | "schedule_share"
+    | "reminder";
+  title: string;
+  body: string;
+  link: string | null;
+  meta: Record<string, unknown>;
+  isRead: boolean;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export interface ReminderJob {
+  id: string;
+  userId: string;
+  type: "days_off_selection";
+  status: "pending" | "sent" | "cancelled" | "failed";
+  triggerAt: string;
+  payload: Record<string, unknown>;
+  sentAt: string | null;
+  createdAt: string;
+}
+
+export interface WorkflowActionToken {
+  id: string;
+  workflowType: "swap_hr_decision";
+  targetId: string;
+  token: string;
+  expiresAt: string;
+  consumedAt: string | null;
+  consumedBy: string | null;
+  action: "approve" | "decline" | null;
+  createdAt: string;
+}
+
+export interface PaginatedQuery {
+  page: number;
+  pageSize: number;
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
 }
 
 // ── Auth session ───────────────────────────────────────────────────────────

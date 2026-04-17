@@ -1,4 +1,4 @@
-import { CalendarCheck2, Mail, TriangleAlert, User } from "lucide-react";
+import { CalendarCheck2, TriangleAlert, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Shift, SwapRequest, SwapRequestStatus } from "@/types/domain";
 import {
@@ -13,7 +13,6 @@ interface SwapRequestCardProps {
   userDisplayNames?: Record<string, string>;
   shiftById?: Record<string, Shift>;
   onStatusChange: (request: SwapRequest, status: SwapRequestStatus) => void;
-  onSendToHr: (request: SwapRequest) => void;
   onApplySwap: (request: SwapRequest) => void;
 }
 
@@ -71,22 +70,9 @@ export function SwapRequestCard({
   userDisplayNames,
   shiftById,
   onStatusChange,
-  onSendToHr,
   onApplySwap,
 }: SwapRequestCardProps) {
   const received = request.targetUserId === currentUserId;
-  const isRequester = request.requesterUserId === currentUserId;
-  const isTarget = request.targetUserId === currentUserId;
-  const currentUserHrSent = isRequester
-    ? request.requesterHrSent
-    : isTarget
-      ? request.targetHrSent
-      : false;
-  const currentUserHrApproved = isRequester
-    ? request.requesterHrApproved
-    : isTarget
-      ? request.targetHrApproved
-      : false;
   const readyForApply = request.status === "ready_to_apply";
   const requesterName =
     userDisplayNames?.[request.requesterUserId] ??
@@ -134,7 +120,9 @@ export function SwapRequestCard({
             )}
           </p>
         </div>
-        {(request.status === "awaiting_hr_request" || readyForApply) && (
+        {(request.status === "awaiting_hr_request" ||
+          request.status === "submitted_to_hr" ||
+          readyForApply) && (
           <div className="rounded border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-700">
             <p>
               RH enviado: requisitante {request.requesterHrSent ? "sim" : "nao"}
@@ -161,7 +149,7 @@ export function SwapRequestCard({
           <>
             <Button
               size="sm"
-              onClick={() => onStatusChange(request, "awaiting_hr_request")}
+              onClick={() => onStatusChange(request, "accepted")}
             >
               Aceitar
             </Button>
@@ -175,23 +163,13 @@ export function SwapRequestCard({
           </>
         ) : null}
 
-        {request.status === "awaiting_hr_request" &&
-        (isRequester || isTarget) &&
-        !currentUserHrSent ? (
-          <Button size="sm" onClick={() => onSendToHr(request)}>
-            <Mail className="mr-1 h-3 w-3" />
-            Enviar para RH
-          </Button>
-        ) : null}
-
-        {request.status === "awaiting_hr_request" &&
-        currentUserHrSent &&
-        !currentUserHrApproved ? (
+        {request.status === "accepted" &&
+        request.requesterUserId === currentUserId ? (
           <Button
             size="sm"
-            onClick={() => onStatusChange(request, "ready_to_apply")}
+            onClick={() => onStatusChange(request, "submitted_to_hr")}
           >
-            Marcar RH aprovado
+            Enviar para RH
           </Button>
         ) : null}
 

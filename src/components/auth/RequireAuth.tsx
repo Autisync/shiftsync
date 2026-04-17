@@ -12,6 +12,7 @@
 import { type ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/use-auth";
+import { LoadingState } from "@/components/ui/loading-state";
 
 interface RequireAuthProps {
   children: ReactNode;
@@ -30,6 +31,7 @@ export function RequireAuth({ children, redirectTo = "/" }: RequireAuthProps) {
         aria-label="Loading…"
         aria-live="polite"
       >
+        <LoadingState message="A carregar sessão..." />
         <span className="sr-only">Loading…</span>
       </div>
     );

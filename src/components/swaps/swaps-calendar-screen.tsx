@@ -1,8 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import type { View } from "react-big-calendar";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { getBackend } from "@/services/backend/backend-provider";
 import type { BackendServices } from "@/services/backend/types";
 import type {
@@ -14,15 +22,14 @@ import type {
   UserProfile,
 } from "@/types/domain";
 import { getErrorMessage } from "@/lib/getErrorMessage";
+import {
+  generateGmailComposeLink,
+  generateMailtoLink,
+  generateOutlookComposeLink,
+  generateSwapEmailTemplate,
+} from "@/lib/swap-email-template";
 import { buildRankedSwapMatches } from "@/features/swaps/services/swap-matching";
 import type { RankedSwapMatch } from "@/features/swaps/services/swap-matching";
-import { validateSwapConstraints } from "@/features/swaps/services/swap-constraints";
-import {
-  generateSwapEmailTemplate,
-  generateMailtoLink,
-  generateGmailComposeLink,
-  generateOutlookComposeLink,
-} from "@/lib/swap-email-template";
 import { SwapCalendar } from "@/components/swaps/SwapCalendar";
 import { SwapSidePanel } from "@/components/swaps/SwapSidePanel";
 import { SwapRequestList } from "@/components/swaps/SwapRequestList";
@@ -31,8 +38,10 @@ import type {
   SwapCalendarEventStatus,
 } from "@/components/swaps/swap-calendar.types";
 import { SwapSuggestionCard } from "@/components/swaps/SwapSuggestionCard";
+import { LoadingState } from "@/components/ui/loading-state";
 import { getSupabaseClient } from "@/lib/supabase-client";
 import type { ShiftData } from "@/types/shift";
+import { runWithToast } from "@/lib/async-toast";
 
 interface SwapsCalendarScreenProps {
   userId: string;
@@ -43,14 +52,40 @@ interface SwapsCalendarScreenProps {
   backend?: Pick<BackendServices, "shifts" | "swaps" | "users" | "calendar">;
 }
 
-function fallbackProfile(userId: string): UserProfile {
+interface SwapHrEmailDraft {
+  requestId: string;
+  to: string;
+  cc: string;
+  subject: string;
+  body: string;
+  mailto: string;
+  gmailCompose: string;
+  outlookCompose: string;
+}
+
+const SWAPS_AUTO_SYNC_INTERVAL_MS = 20000;
+
+function toShiftData(shift: Shift): ShiftData {
   return {
-    id: userId,
-    employeeCode: userId.slice(0, 8),
-    fullName: null,
-    email: null,
-    createdAt: new Date(0).toISOString(),
-    updatedAt: new Date(0).toISOString(),
+    id: shift.id,
+    shiftUid: shift.shiftUid ?? undefined,
+    week: 0,
+    date: new Date(shift.date),
+    startTime: new Date(shift.startsAt).toLocaleTimeString("pt-PT", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }),
+    endTime: new Date(shift.endsAt).toLocaleTimeString("pt-PT", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }),
+    shiftType: "other",
+    status: shift.status === "deleted" ? "deleted" : "active",
+    location: shift.location ?? undefined,
+    notes: shift.role ?? undefined,
+    googleEventId: shift.googleEventId ?? undefined,
   };
 }
 
@@ -124,6 +159,9 @@ export function SwapsCalendarScreen({
     Array<{ shift: Shift; availability: SwapAvailability }>
   >([]);
   const [swapRequests, setSwapRequests] = useState<SwapRequest[]>([]);
+  const [requestsPage, setRequestsPage] = useState(1);
+  const [requestsPageSize] = useState(10);
+  const [requestsTotal, setRequestsTotal] = useState(0);
   const [userDisplayNames, setUserDisplayNames] = useState<
     Record<string, string>
   >({});
@@ -137,6 +175,21 @@ export function SwapsCalendarScreen({
     useState<SwapCalendarEventItem | null>(null);
   const [busyShiftId, setBusyShiftId] = useState<string | null>(null);
   const [busyMatchKey, setBusyMatchKey] = useState<string | null>(null);
+  const [hrEmailDraft, setHrEmailDraft] = useState<SwapHrEmailDraft | null>(
+    null,
+  );
+  const [isHrPreviewOpen, setIsHrPreviewOpen] = useState(false);
+  const [markingHrSent, setMarkingHrSent] = useState(false);
+  const syncInFlightRef = useRef(false);
+
+  const fallbackProfile = (id: string): UserProfile => ({
+    id,
+    employeeCode: "",
+    fullName: null,
+    email: null,
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+  });
 
   const openOwnShiftIds = useMemo(
     () =>
@@ -207,13 +260,16 @@ export function SwapsCalendarScreen({
       const [shifts, availabilities, requests] = await Promise.all([
         api.shifts.getShiftsForUser(userId),
         api.swaps.getOpenAvailabilities(),
-        api.swaps.getSwapRequestsForUser(userId),
+        api.swaps.getSwapRequestsForUserPaginated(userId, {
+          page: requestsPage,
+          pageSize: requestsPageSize,
+        }),
       ]);
 
       const participantIds = Array.from(
         new Set([
           ...availabilities.map((entry) => entry.shift.userId),
-          ...requests.flatMap((request) => [
+          ...requests.items.flatMap((request) => [
             request.requesterUserId,
             request.targetUserId,
           ]),
@@ -229,7 +285,7 @@ export function SwapsCalendarScreen({
 
       const requestShiftIds = Array.from(
         new Set(
-          requests
+          requests.items
             .flatMap((request) => [
               request.requesterShiftId,
               request.targetShiftId,
@@ -268,7 +324,8 @@ export function SwapsCalendarScreen({
 
       setOwnShifts(shifts);
       setOpenAvailabilities(availabilities);
-      setSwapRequests(requests);
+      setSwapRequests(requests.items);
+      setRequestsTotal(requests.total);
       setUserDisplayNames(names);
       setRequestShiftsById(shiftsById);
       setHrSettings(settings);
@@ -285,7 +342,63 @@ export function SwapsCalendarScreen({
     void loadData();
     const id = window.setInterval(() => void loadData(true), 10000);
     return () => window.clearInterval(id);
-  }, [enabled, userId]);
+  }, [enabled, userId, requestsPage, requestsPageSize]);
+
+  const syncOwnCalendar = async (opts?: {
+    showDeletedToast?: boolean;
+    refreshAfterSync?: boolean;
+  }) => {
+    if (!accessToken || !resolvedCalendarId || syncInFlightRef.current) {
+      return;
+    }
+
+    syncInFlightRef.current = true;
+    try {
+      const latestOwnShifts = await api.shifts.getShiftsForUser(userId);
+      const result = await api.calendar.runSync(
+        latestOwnShifts.map(toShiftData),
+        {
+          userId,
+          accessToken,
+          calendarId: resolvedCalendarId,
+          fullResync: false,
+          removeStaleEvents: true,
+        },
+      );
+
+      if ((opts?.showDeletedToast ?? true) && result.summary.deleted > 0) {
+        toast.info(
+          `Sincronização detectou ${result.summary.deleted} evento(s) removido(s) no Google Calendar e atualizou o calendário de trocas.`,
+        );
+      }
+
+      const hasMaterialChanges =
+        result.summary.created > 0 ||
+        result.summary.updated > 0 ||
+        result.summary.deleted > 0;
+
+      if (hasMaterialChanges || opts?.refreshAfterSync) {
+        await loadData(true);
+      }
+    } catch {
+      // Best-effort background sync: keep UI usable even when reconciliation fails.
+    } finally {
+      syncInFlightRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    if (!enabled || !userId || !accessToken || !resolvedCalendarId) {
+      return;
+    }
+
+    void syncOwnCalendar({ showDeletedToast: false, refreshAfterSync: true });
+    const id = window.setInterval(() => {
+      void syncOwnCalendar({ showDeletedToast: true, refreshAfterSync: false });
+    }, SWAPS_AUTO_SYNC_INTERVAL_MS);
+
+    return () => window.clearInterval(id);
+  }, [enabled, userId, accessToken, resolvedCalendarId]);
 
   const onToggleAvailability = async (shiftId: string) => {
     setBusyShiftId(shiftId);
@@ -297,6 +410,10 @@ export function SwapsCalendarScreen({
         await api.swaps.openAvailability(shiftId, userId);
       }
       await loadData(true);
+      await syncOwnCalendar({
+        showDeletedToast: true,
+        refreshAfterSync: false,
+      });
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -341,23 +458,145 @@ export function SwapsCalendarScreen({
         return;
       }
 
-      await api.swaps.createSwapRequest({
-        requesterUserId: userId,
-        requesterShiftId: match.ownShift.id,
-        targetUserId: match.targetShift.userId,
-        targetShiftId: match.targetShift.id,
-        message: `Sugestao de calendario com score ${match.score}`,
-      });
+      await runWithToast(
+        () =>
+          api.swaps.createSwapRequest({
+            requesterUserId: userId,
+            requesterShiftId: match.ownShift.id,
+            targetUserId: match.targetShift.userId,
+            targetShiftId: match.targetShift.id,
+            message: `Sugestao de calendario com score ${match.score}`,
+          }),
+        {
+          loading: "A enviar pedido de troca...",
+          success: "Pedido de troca enviado com sucesso.",
+          error: (error) => `Falha ao enviar pedido: ${getErrorMessage(error)}`,
+        },
+      );
       setFeedback("Pedido de troca enviado.");
       setSelectedEvent(null);
-      toast.success("Pedido de troca enviado com sucesso.");
+      await loadData(true);
+      await syncOwnCalendar({
+        showDeletedToast: true,
+        refreshAfterSync: false,
+      });
+    } catch (err) {
+      const message = getErrorMessage(err);
+      setError(message);
+    } finally {
+      setBusyMatchKey(null);
+    }
+  };
+
+  const buildManualHrEmailDraft = async (
+    request: SwapRequest,
+  ): Promise<SwapHrEmailDraft> => {
+    const decisionLinks = await api.swaps.createHrDecisionLinks({
+      requestId: request.id,
+      actorUserId: userId,
+      baseUrl: `${window.location.origin}${import.meta.env.BASE_URL ?? "/"}`,
+      expiresInHours: 24,
+    });
+
+    const requesterSettings = await api.swaps.getHRSettings(
+      request.requesterUserId,
+    );
+    const targetSettings = await api.swaps.getHRSettings(request.targetUserId);
+
+    const toEmail = requesterSettings?.hrEmail || targetSettings?.hrEmail || "";
+    const ccEmails =
+      requesterSettings?.ccEmails ?? targetSettings?.ccEmails ?? [];
+
+    if (!toEmail) {
+      throw new Error(
+        "Email do RH não configurado. Atualize as Configurações no perfil do requisitante ou de quem aceita a troca.",
+      );
+    }
+
+    const requesterProfile =
+      (await api.users.getUserProfile(request.requesterUserId)) ??
+      fallbackProfile(request.requesterUserId);
+    const targetProfile =
+      (await api.users.getUserProfile(request.targetUserId)) ??
+      fallbackProfile(request.targetUserId);
+
+    const requesterShift =
+      requestShiftsById[request.requesterShiftId] ??
+      (await api.shifts.getShiftById(request.requesterShiftId));
+    if (!requesterShift) {
+      throw new Error("Turno do requisitante não encontrado.");
+    }
+
+    const targetShift = request.targetShiftId
+      ? (requestShiftsById[request.targetShiftId] ??
+        (await api.shifts.getShiftById(request.targetShiftId)))
+      : null;
+
+    const template = generateSwapEmailTemplate({
+      request,
+      requester: requesterProfile,
+      target: targetProfile,
+      requesterShift,
+      targetShift,
+      hrEmail: toEmail,
+      ccEmails,
+      approveUrl: decisionLinks.approveUrl,
+      declineUrl: decisionLinks.declineUrl,
+      expiresAt: decisionLinks.expiresAt,
+    });
+
+    return {
+      requestId: request.id,
+      to: template.to,
+      cc: template.cc,
+      subject: template.subject,
+      body: template.body,
+      mailto: generateMailtoLink(
+        template.subject,
+        template.body,
+        template.to,
+        template.cc,
+      ),
+      gmailCompose: generateGmailComposeLink(
+        template.subject,
+        template.body,
+        template.to,
+        template.cc,
+      ),
+      outlookCompose: generateOutlookComposeLink(
+        template.subject,
+        template.body,
+        template.to,
+        template.cc,
+      ),
+    };
+  };
+
+  const openManualHrPreview = async (request: SwapRequest) => {
+    const draft = await buildManualHrEmailDraft(request);
+    setHrEmailDraft(draft);
+    setIsHrPreviewOpen(true);
+  };
+
+  const onMarkHrEmailSent = async () => {
+    if (!hrEmailDraft) {
+      return;
+    }
+
+    setMarkingHrSent(true);
+    try {
+      await api.swaps.markHREmailSent(hrEmailDraft.requestId, userId);
+      setIsHrPreviewOpen(false);
+      setHrEmailDraft(null);
+      setFeedback("Email para RH marcado como enviado.");
+      toast.success("Email para RH marcado como enviado.");
       await loadData(true);
     } catch (err) {
       const message = getErrorMessage(err);
       setError(message);
-      toast.error(`Falha ao enviar pedido: ${message}`);
+      toast.error(`Falha ao marcar email como enviado: ${message}`);
     } finally {
-      setBusyMatchKey(null);
+      setMarkingHrSent(false);
     }
   };
 
@@ -368,140 +607,59 @@ export function SwapsCalendarScreen({
     setError(null);
     setFeedback(null);
     try {
-      if (status === "awaiting_hr_request") {
-        const requesterShifts = await api.shifts.getShiftsForUser(
-          request.requesterUserId,
+      if (status === "accepted") {
+        const updatedRequest = await api.swaps.updateSwapStatus(
+          request.id,
+          "accepted",
+          userId,
         );
-        const targetShifts = await api.shifts.getShiftsForUser(
-          request.targetUserId,
-        );
-        const validation = validateSwapConstraints({
-          requesterShifts,
-          targetShifts,
-          ownShiftId: request.requesterShiftId,
-          targetShiftId: request.targetShiftId,
+        await loadData(true);
+        await syncOwnCalendar({
+          showDeletedToast: true,
+          refreshAfterSync: false,
         });
-        await api.swaps.acceptSwapRequest(request.id, userId, validation);
         setFeedback(
-          validation.valid
-            ? "Pedido aceite."
-            : validation.violations[0]?.message ||
-                "Troca nao possivel devido a regra 6/60.",
+          "Pedido aceite. Revise o email e envie manualmente para o RH.",
         );
-      } else if (status === "ready_to_apply") {
-        await api.swaps.markHRApproved(request.id, userId);
-        setFeedback("Aprovacao RH marcada.");
+        toast.success("Pedido aceite. Envio ao RH agora é manual.");
+        await openManualHrPreview(updatedRequest);
+      } else if (status === "submitted_to_hr") {
+        await openManualHrPreview(request);
+        setFeedback("Preview de email preparado. Envie usando o seu email.");
       } else {
         await api.swaps.updateSwapStatus(request.id, status, userId);
         setFeedback(`Pedido atualizado para ${status}.`);
+        toast.success(`Pedido atualizado para ${status}.`);
+        await loadData(true);
+        await syncOwnCalendar({
+          showDeletedToast: true,
+          refreshAfterSync: false,
+        });
       }
-      await loadData(true);
     } catch (err) {
-      setError(getErrorMessage(err));
-    }
-  };
-
-  const onSendToHr = async (request: SwapRequest) => {
-    setError(null);
-    setFeedback(null);
-    try {
-      const requester =
-        (await api.users.getUserProfile(request.requesterUserId)) ??
-        fallbackProfile(request.requesterUserId);
-      const target =
-        (await api.users.getUserProfile(request.targetUserId)) ??
-        fallbackProfile(request.targetUserId);
-      const requesterShift = await api.shifts.getShiftById(
-        request.requesterShiftId,
-      );
-      const targetShift = request.targetShiftId
-        ? await api.shifts.getShiftById(request.targetShiftId)
-        : null;
-
-      if (!requesterShift) {
-        throw new Error("Turno do requisitante nao encontrado");
-      }
-
-      const activeHrSettings =
-        hrSettings ?? (await api.swaps.getHRSettings(userId));
-      if (!activeHrSettings) {
-        setFeedback(
-          "Configure primeiro os dados de RH em Configurações para enviar o pedido.",
-        );
-        onOpenSettings?.();
-        return;
-      }
-
-      const template = generateSwapEmailTemplate({
-        request,
-        requester,
-        target,
-        requesterShift,
-        targetShift,
-        hrEmail: activeHrSettings.hrEmail,
-        ccEmails: activeHrSettings.ccEmails,
-      });
-
-      const mailto = generateMailtoLink(
-        template.subject,
-        template.body,
-        template.to,
-        template.cc,
-      );
-      const gmail = generateGmailComposeLink(
-        template.subject,
-        template.body,
-        template.to,
-        template.cc,
-      );
-      const outlook = generateOutlookComposeLink(
-        template.subject,
-        template.body,
-        template.to,
-        template.cc,
-      );
-
-      window.open(gmail, "_blank", "noopener,noreferrer") ||
-        window.open(outlook, "_blank", "noopener,noreferrer") ||
-        window.open(mailto, "_blank", "noopener,noreferrer");
-
-      setFeedback(
-        "Rascunho de email aberto. Confirme no cartao do pedido apos enviar.",
-      );
-      await api.swaps.markHREmailSent(request.id, userId);
-      await loadData(true);
-    } catch (err) {
-      setError(getErrorMessage(err));
+      const message = getErrorMessage(err);
+      setError(message);
+      toast.error(`Falha ao atualizar pedido: ${message}`);
     }
   };
 
   const onApplySwap = async (request: SwapRequest) => {
-    const toShiftData = (shift: Shift): ShiftData => ({
-      id: shift.id,
-      shiftUid: shift.shiftUid ?? undefined,
-      week: 0,
-      date: new Date(shift.date),
-      startTime: new Date(shift.startsAt).toLocaleTimeString("pt-PT", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }),
-      endTime: new Date(shift.endsAt).toLocaleTimeString("pt-PT", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }),
-      shiftType: "other",
-      status: shift.status === "deleted" ? "deleted" : "active",
-      location: shift.location ?? undefined,
-      notes: shift.role ?? undefined,
-      googleEventId: shift.googleEventId ?? undefined,
-    });
-
     setError(null);
     setFeedback(null);
     try {
-      await api.swaps.applySwap(request.id);
+      await runWithToast(() => api.swaps.applySwap(request.id), {
+        loading: "A aplicar troca...",
+        success: "Troca aplicada com sucesso.",
+        error: (error) => {
+          const rawMessage = getErrorMessage(error);
+          const message = rawMessage.includes(
+            "shift ownership changed since approval",
+          )
+            ? "Falha ao aplicar troca: os turnos mudaram desde a aprovacao. Atualize os pedidos e tente novamente."
+            : rawMessage;
+          return `Falha ao atualizar calendario: ${message}`;
+        },
+      });
 
       // Reload local data first so the in-app calendar reflects the applied swap.
       await loadData(false);
@@ -510,13 +668,19 @@ export function SwapsCalendarScreen({
         const latestOwnShifts = await api.shifts.getShiftsForUser(userId);
         const ownShiftData = latestOwnShifts.map(toShiftData);
 
-        await api.calendar.runSync(ownShiftData, {
+        const ownSyncResult = await api.calendar.runSync(ownShiftData, {
           userId,
           accessToken,
           calendarId: resolvedCalendarId,
           fullResync: false,
           removeStaleEvents: true,
         });
+
+        if (ownSyncResult.summary.deleted > 0) {
+          toast.info(
+            `Sincronização detectou ${ownSyncResult.summary.deleted} evento(s) removido(s) no Google Calendar e atualizou o calendário de trocas.`,
+          );
+        }
 
         // Best effort: try syncing the counterpart user as well (works when
         // the current token/calendar has access and policy allows reading shifts).
@@ -547,22 +711,15 @@ export function SwapsCalendarScreen({
           setFeedback(
             "Troca aplicada e Google Calendar sincronizado para ambos os utilizadores.",
           );
-          toast.success(
-            "Troca aplicada e Google Calendar atualizado para ambos.",
-          );
         } else {
           setFeedback(
             "Troca aplicada e Google Calendar sincronizado para o utilizador atual. O outro utilizador deve sincronizar a propria conta.",
-          );
-          toast.success(
-            "Troca aplicada. Google Calendar do utilizador atual atualizado.",
           );
         }
       } else {
         setFeedback(
           "Troca aplicada no sistema. Para Google Calendar, selecione um calendario e sincronize.",
         );
-        toast.success("Troca aplicada no calendario interno.");
       }
     } catch (err) {
       const rawMessage = getErrorMessage(err);
@@ -572,7 +729,6 @@ export function SwapsCalendarScreen({
         ? "Falha ao aplicar troca: os turnos mudaram desde a aprovacao. Atualize os pedidos e tente novamente."
         : rawMessage;
       setError(message);
-      toast.error(`Falha ao atualizar calendario: ${message}`);
     }
   };
 
@@ -601,9 +757,7 @@ export function SwapsCalendarScreen({
               Visualize turnos, disponibilidade aberta e pedidos no mesmo fluxo.
             </p>
           </div>
-          {loading ? (
-            <span className="text-xs text-slate-500">A carregar...</span>
-          ) : null}
+          {loading ? <LoadingState inline className="text-xs" /> : null}
         </div>
 
         {error ? (
@@ -659,8 +813,12 @@ export function SwapsCalendarScreen({
             hasGoogleSyncContext={Boolean(accessToken && resolvedCalendarId)}
             userDisplayNames={userDisplayNames}
             shiftById={requestShiftsById}
+            page={requestsPage}
+            pageSize={requestsPageSize}
+            total={requestsTotal}
+            loading={loading}
+            onPageChange={setRequestsPage}
             onStatusChange={onStatusChange}
-            onSendToHr={onSendToHr}
             onApplySwap={onApplySwap}
           />
         </div>
@@ -698,15 +856,113 @@ export function SwapsCalendarScreen({
       </div>
 
       <div className="flex justify-end">
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => onOpenSettings?.()}>
-            Abrir Configurações
-          </Button>
-          <Button variant="outline" onClick={() => void loadData()}>
-            Atualizar
-          </Button>
-        </div>
+        <Button variant="outline" onClick={() => void loadData()}>
+          Atualizar
+        </Button>
       </div>
+
+      <Dialog
+        open={isHrPreviewOpen}
+        onOpenChange={(open) => {
+          setIsHrPreviewOpen(open);
+          if (!open) {
+            setHrEmailDraft(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Preview do email para RH</DialogTitle>
+            <DialogDescription>
+              O envio é manual e será feito pelo seu cliente de email.
+            </DialogDescription>
+          </DialogHeader>
+
+          {hrEmailDraft ? (
+            <div className="space-y-3">
+              <div className="rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                <p>
+                  <span className="font-semibold">Para:</span> {hrEmailDraft.to}
+                </p>
+                <p>
+                  <span className="font-semibold">CC:</span>{" "}
+                  {hrEmailDraft.cc || "-"}
+                </p>
+                <p>
+                  <span className="font-semibold">Assunto:</span>{" "}
+                  {hrEmailDraft.subject}
+                </p>
+              </div>
+
+              <textarea
+                readOnly
+                value={hrEmailDraft.body}
+                className="h-64 w-full rounded border border-slate-300 bg-white p-3 text-xs text-slate-800"
+              />
+
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={hrEmailDraft.gmailCompose}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center rounded border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900"
+                >
+                  Abrir Gmail
+                </a>
+                <a
+                  href={hrEmailDraft.outlookCompose}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center rounded border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900"
+                >
+                  Abrir Outlook
+                </a>
+                <a
+                  href={hrEmailDraft.mailto}
+                  className="inline-flex items-center rounded border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900"
+                >
+                  Abrir app de Email
+                </a>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(
+                      [
+                        `To: ${hrEmailDraft.to}`,
+                        `CC: ${hrEmailDraft.cc || "-"}`,
+                        `Subject: ${hrEmailDraft.subject}`,
+                        "",
+                        hrEmailDraft.body,
+                      ].join("\n"),
+                    );
+                    toast.success("Conteúdo do email copiado.");
+                  }}
+                >
+                  Copiar conteúdo
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsHrPreviewOpen(false);
+                setHrEmailDraft(null);
+              }}
+            >
+              Fechar
+            </Button>
+            <Button
+              disabled={!hrEmailDraft || markingHrSent}
+              onClick={onMarkHrEmailSent}
+            >
+              {markingHrSent ? "A marcar..." : "Marcar como enviado"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 }

@@ -20,6 +20,9 @@ import { GoogleCalendarService } from "@/lib/google-calendar";
 import { getErrorMessage } from "@/lib/getErrorMessage";
 import type { GoogleCalendar } from "@/types/shift";
 import { CalendarCheck2, Mail, UserRound } from "lucide-react";
+import { LoadingState } from "@/components/ui/loading-state";
+import { Spinner } from "@/components/ui/spinner";
+import { toast } from "sonner";
 
 interface ProfileSettingsDialogProps {
   open: boolean;
@@ -75,6 +78,7 @@ export function ProfileSettingsDialog({
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     setFullName(initialFullName ?? "");
@@ -290,6 +294,11 @@ export function ProfileSettingsDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {calendarLoading ? (
+                <div className="mt-2">
+                  <LoadingState inline message="A carregar calendários..." />
+                </div>
+              ) : null}
               {calendarError ? (
                 <p className="mt-1 text-xs text-rose-600">{calendarError}</p>
               ) : null}
@@ -311,6 +320,7 @@ export function ProfileSettingsDialog({
           <Button
             onClick={async () => {
               if (!canSave) return;
+              setSaveError(null);
               setSaving(true);
               try {
                 await onSave({
@@ -322,15 +332,28 @@ export function ProfileSettingsDialog({
                   defaultCalendarId,
                   defaultCalendarName,
                 });
+              } catch (error) {
+                const message = getErrorMessage(error);
+                setSaveError(message);
+                toast.error(`Falha ao guardar perfil: ${message}`);
               } finally {
                 setSaving(false);
               }
             }}
             disabled={!canSave || saving}
           >
-            {saving ? "A guardar..." : "Guardar"}
+            {saving ? (
+              <span className="inline-flex items-center gap-2">
+                <Spinner className="size-4 text-white" />A guardar...
+              </span>
+            ) : (
+              "Guardar"
+            )}
           </Button>
         </DialogFooter>
+        {saveError ? (
+          <div className="px-6 pb-4 text-xs text-rose-600">{saveError}</div>
+        ) : null}
       </DialogContent>
     </Dialog>
   );

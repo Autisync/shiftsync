@@ -16,6 +16,9 @@ export interface EmailTemplateInput {
   targetShift: Shift | null;
   hrEmail: string;
   ccEmails: string[];
+  approveUrl: string;
+  declineUrl: string;
+  expiresAt: string;
 }
 
 function formatDateTime(isoString: string): string {
@@ -97,6 +100,11 @@ ${swapResult}
 
 Validação de Restrições:
 ${violation}
+
+Decisão do RH (link seguro e de uso único):
+Aprovar: ${input.approveUrl}
+Recusar: ${input.declineUrl}
+Validade: ${formatDateTime(input.expiresAt)}
 
 ID do Pedido: ${input.request.id}
 Criado em: ${formatDateTime(input.request.createdAt)}

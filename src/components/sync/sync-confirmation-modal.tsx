@@ -33,6 +33,9 @@ import { getErrorMessage } from "@/lib/getErrorMessage";
 import { toast } from "sonner";
 import type { CalendarSyncPreviewChange } from "@/features/calendar/types";
 import type { ConstraintViolation } from "@/features/swaps/services/swap-constraints";
+import { LoadingState } from "@/components/ui/loading-state";
+import { Spinner } from "@/components/ui/spinner";
+import { runWithToast } from "@/lib/async-toast";
 
 const STORAGE_KEY_SELECTED_CALENDAR = "selected_calendar_id";
 
@@ -177,22 +180,23 @@ export function SyncConfirmationModal({
     try {
       setCreatingCalendar(true);
       const service = new GoogleCalendarService(accessToken);
-      const newCalendar = await service.createCalendar(
-        name,
-        timeZone,
-        description,
+      const newCalendar = await runWithToast(
+        () => service.createCalendar(name, timeZone, description),
+        {
+          loading: "A criar calendário...",
+          success: (calendar) =>
+            `Calendário "${calendar.summary}" criado com sucesso!`,
+          error: (error) =>
+            "Falha ao criar calendário: " + getErrorMessage(error),
+        },
       );
-
-      toast.success(`Calendário "${newCalendar.summary}" criado com sucesso!`);
 
       // Refresh calendars and select the new one
       await fetchCalendars();
       setSelectedCalendarId(newCalendar.id);
       localStorage.setItem(STORAGE_KEY_SELECTED_CALENDAR, newCalendar.id);
       setShowCreateDialog(false);
-    } catch (err: unknown) {
-      const errorMessage = getErrorMessage(err);
-      toast.error("Falha ao criar calendário: " + errorMessage);
+    } catch {
     } finally {
       setCreatingCalendar(false);
     }
@@ -318,6 +322,10 @@ export function SyncConfirmationModal({
                   </AlertDescription>
                 </Alert>
               )}
+
+              {calendarsLoading && !calendarsError ? (
+                <LoadingState inline message="A carregar calendários..." />
+              ) : null}
 
               <div className="flex flex-col sm:flex-row gap-2">
                 <Select
@@ -455,9 +463,13 @@ export function SyncConfirmationModal({
                     disabled={!selectedCalendarId || previewLoading}
                     onClick={handleRefreshPreview}
                   >
-                    {previewLoading
-                      ? "A calcular..."
-                      : "Atualizar Pré-visualização"}
+                    {previewLoading ? (
+                      <span className="inline-flex items-center gap-2">
+                        <Spinner className="size-4" />A calcular...
+                      </span>
+                    ) : (
+                      "Atualizar Pré-visualização"
+                    )}
                   </Button>
                 </div>
               </div>
@@ -680,8 +692,7 @@ export function SyncConfirmationModal({
             >
               {loading ? (
                 <span className="flex items-center gap-2">
-                  <div className="w-3 h-3 sm:w-4 sm:h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  A sincronizar...
+                  <Spinner className="size-4 text-white" />A sincronizar...
                 </span>
               ) : (
                 `Confirmar e Sincronizar ${totalChanges} Alteração${totalChanges !== 1 ? "s" : ""}`

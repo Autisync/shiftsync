@@ -12,6 +12,7 @@ import { Shield, Lock, Eye } from "lucide-react";
 import { useState } from "react";
 import Footer from "@/components/Footer";
 import { Link } from "react-router-dom";
+import { Spinner } from "@/components/ui/spinner";
 
 interface AuthCardProps {
   onSignIn: (gdprConsent: boolean) => void;
@@ -152,8 +153,7 @@ export function AuthCard({ onSignIn, loading }: AuthCardProps) {
             >
               {loading ? (
                 <span className="flex items-center gap-2">
-                  <div className="w-3 h-3 sm:w-4 sm:h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  A conectar...
+                  <Spinner className="size-4 text-white" />A conectar...
                 </span>
               ) : (
                 "Iniciar sessão com Google"

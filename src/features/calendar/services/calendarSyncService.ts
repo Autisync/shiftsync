@@ -778,7 +778,7 @@ export class CalendarSyncService {
       const alreadyIncluded = syncedShifts.some(
         (shift) => shift.id === original.id,
       );
-      if (!alreadyIncluded && original.status !== "deleted") {
+      if (!alreadyIncluded) {
         syncedShifts.push(original);
       }
     }

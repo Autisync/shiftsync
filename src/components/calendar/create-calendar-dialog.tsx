@@ -18,7 +18,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Calendar, Loader2 } from "lucide-react";
+import { Calendar } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 
 interface CreateCalendarDialogProps {
   open: boolean;
@@ -146,7 +147,7 @@ export function CreateCalendarDialog({
           >
             {loading ? (
               <span className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />A criar...
+                <Spinner className="size-4 text-white" />A criar...
               </span>
             ) : (
               "Criar Calendário"

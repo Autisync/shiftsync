@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Shift, SwapRequest, SwapRequestStatus } from "@/types/domain";
 import { SwapRequestCard } from "@/components/swaps/SwapRequestCard";
+import { PaginatedListControls } from "@/components/ui/paginated-list-controls";
+import {
+  LoadingListSkeleton,
+  LoadingState,
+} from "@/components/ui/loading-state";
 
 // ── Seen-tracking helpers ────────────────────────────────────────────────────
 
@@ -41,8 +46,12 @@ interface SwapRequestListProps {
   hasGoogleSyncContext?: boolean;
   userDisplayNames?: Record<string, string>;
   shiftById?: Record<string, Shift>;
+  page: number;
+  pageSize: number;
+  total: number;
+  loading?: boolean;
+  onPageChange: (page: number) => void;
   onStatusChange: (request: SwapRequest, status: SwapRequestStatus) => void;
-  onSendToHr: (request: SwapRequest) => void;
   onApplySwap: (request: SwapRequest) => void;
 }
 
@@ -52,8 +61,12 @@ export function SwapRequestList({
   hasGoogleSyncContext,
   userDisplayNames,
   shiftById,
+  page,
+  pageSize,
+  total,
+  loading = false,
+  onPageChange,
   onStatusChange,
-  onSendToHr,
   onApplySwap,
 }: SwapRequestListProps) {
   const [tab, setTab] = useState("pendentes");
@@ -136,6 +149,15 @@ export function SwapRequestList({
   }, [seen, grouped]);
 
   const renderList = (items: SwapRequest[]) => {
+    if (loading && items.length === 0) {
+      return (
+        <div className="space-y-3">
+          <LoadingState message="A carregar pedidos..." inline />
+          <LoadingListSkeleton rows={3} />
+        </div>
+      );
+    }
+
     if (items.length === 0) {
       return <p className="text-sm text-slate-500">Sem pedidos nesta vista.</p>;
     }
@@ -151,7 +173,6 @@ export function SwapRequestList({
             userDisplayNames={userDisplayNames}
             shiftById={shiftById}
             onStatusChange={onStatusChange}
-            onSendToHr={onSendToHr}
             onApplySwap={onApplySwap}
           />
         ))}
@@ -199,6 +220,14 @@ export function SwapRequestList({
       <TabsContent value="todos" className="mt-3">
         {renderList(grouped.todos)}
       </TabsContent>
+
+      <PaginatedListControls
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        loading={loading}
+        onPageChange={onPageChange}
+      />
     </Tabs>
   );
 }

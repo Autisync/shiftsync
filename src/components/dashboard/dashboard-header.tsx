@@ -11,26 +11,42 @@ import {
   Settings,
   History,
   User,
-  CalendarRange,
+  Shuffle,
   LayoutDashboard,
+  CalendarDays,
 } from "lucide-react";
+import type { ReactNode } from "react";
+import { NotificationBell } from "@/components/notifications/notification-bell";
+import type { NotificationService } from "@/services/backend/types";
 
 interface DashboardHeaderProps {
-  email: string;
+  displayName: string;
   onLogout: () => void;
   onOpenSettings?: () => void;
   onOpenSwaps?: () => void;
+  onOpenLeave?: () => void;
+  onOpenHistory?: () => void;
   onOpenDashboard?: () => void;
-  swapsActive?: boolean;
+  activeSection?: "home" | "swaps" | "leave" | "history" | "notifications";
+  leaveEnabled?: boolean;
+  userId?: string;
+  notificationService?: NotificationService;
+  onOpenNotifications?: () => void;
 }
 
 export function DashboardHeader({
-  email,
+  displayName,
   onLogout,
   onOpenSettings,
   onOpenSwaps,
+  onOpenLeave,
+  onOpenHistory,
   onOpenDashboard,
-  swapsActive = false,
+  activeSection = "home",
+  leaveEnabled = false,
+  userId,
+  notificationService,
+  onOpenNotifications,
 }: DashboardHeaderProps) {
   return (
     <Card className="border-0 shadow-lg bg-gradient-to-br from-blue-50 to-slate-50">
@@ -45,58 +61,78 @@ export function DashboardHeader({
                 Seja bem-vindo!
               </CardTitle>
               <CardDescription className="text-sm sm:text-base truncate">
-                {email}
+                {displayName}
               </CardDescription>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            {swapsActive ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onOpenDashboard}
-                className="gap-1 sm:gap-2 flex-1 sm:flex-initial"
-              >
-                <LayoutDashboard className="w-3 h-3 sm:w-4 sm:h-4" />
-                <span className="hidden xs:inline">Dashboard</span>
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onOpenSwaps}
-                className="gap-1 sm:gap-2 flex-1 sm:flex-initial"
-              >
-                <CalendarRange className="w-3 h-3 sm:w-4 sm:h-4" />
-                <span className="hidden xs:inline">Swap Calendar</span>
-              </Button>
-            )}
+          <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto pb-0.5 sm:pb-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             <Button
-              variant="outline"
+              variant={activeSection === "home" ? "default" : "outline"}
               size="sm"
-              className="gap-1 sm:gap-2 flex-1 sm:flex-initial"
+              onClick={onOpenDashboard}
+              className="shrink-0 gap-1.5"
+              aria-label="Painel"
             >
-              <History className="w-3 h-3 sm:w-4 sm:h-4" />
-              <span className="hidden xs:inline">Histórico</span>
+              <LayoutDashboard className="w-4 h-4" />
+              <span className="hidden sm:inline">Painel</span>
+            </Button>
+            <Button
+              variant={activeSection === "swaps" ? "default" : "outline"}
+              size="sm"
+              onClick={onOpenSwaps}
+              className="shrink-0 gap-1.5"
+              aria-label="Ver Trocas"
+            >
+              <Shuffle className="w-4 h-4" />
+              <span className="hidden sm:inline">Ver Trocas</span>
+            </Button>
+            <Button
+              variant={activeSection === "leave" ? "default" : "outline"}
+              size="sm"
+              onClick={onOpenLeave}
+              disabled={!leaveEnabled}
+              className="shrink-0 gap-1.5"
+              aria-label="Ver Ausências"
+            >
+              <CalendarDays className="w-4 h-4" />
+              <span className="hidden sm:inline">Ver Ausências</span>
+            </Button>
+            <Button
+              variant={activeSection === "history" ? "default" : "outline"}
+              size="sm"
+              onClick={onOpenHistory}
+              className="shrink-0 gap-1.5"
+              aria-label="Recuperar"
+            >
+              <History className="w-4 h-4" />
+              <span className="hidden sm:inline">Recuperar</span>
             </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={onOpenSettings}
-              className="gap-1 sm:gap-2 flex-1 sm:flex-initial"
+              className="shrink-0 gap-1.5"
+              aria-label="Configurações"
             >
-              <Settings className="w-3 h-3 sm:w-4 sm:h-4" />
-              <span className="hidden xs:inline">Configurações</span>
+              <Settings className="w-4 h-4" />
             </Button>
+            {userId && notificationService && (
+              <NotificationBell
+                userId={userId}
+                notifications={notificationService}
+                onOpenAll={onOpenNotifications ?? (() => undefined)}
+              />
+            )}
             <Button
               variant="outline"
               size="sm"
               onClick={onLogout}
-              className="gap-1 sm:gap-2 flex-1 sm:flex-initial"
+              className="shrink-0 gap-1.5"
+              aria-label="Sair"
             >
-              <LogOut className="w-3 h-3 sm:w-4 sm:h-4" />
-              <span className="hidden xs:inline">Sair</span>
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Sair</span>
             </Button>
           </div>
         </div>

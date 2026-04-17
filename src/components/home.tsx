@@ -7,7 +7,6 @@ import { ProfileSettingsDialog } from "@/components/auth/ProfileSettingsDialog";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { CalendarSelector } from "@/components/calendar/calendar-selector";
 import { FileUploadZone } from "@/components/upload/file-upload-zone";
-import { SharedScheduleRecoveryCard } from "@/components/upload/shared-schedule-recovery-card";
 import { ShiftPreviewTable } from "@/components/shifts/shift-preview-table";
 import { SyncConfirmationModal } from "@/components/sync/sync-confirmation-modal";
 import { SuccessModal } from "@/components/sync/success-modal";
@@ -28,19 +27,30 @@ import {
   persistUploadMetadata,
   detectSharedScheduleByHash,
 } from "@/features/uploads/services/schedule-upload.service";
-import {
-  isSharedRecoveryEnabled,
-  isSwapsEnabled,
-  isLeaveEnabled,
-} from "@/shared/utils/featureFlags";
+import { isSwapsEnabled, isLeaveEnabled } from "@/shared/utils/featureFlags";
 import { SwapAvailabilityPanel } from "@/components/swaps/swap-availability-panel";
 import { SwapsCalendarScreen } from "@/components/swaps/swaps-calendar-screen";
 import { LeaveScreen } from "@/components/leave/leave-screen";
+import { NotificationsPage } from "@/components/notifications/notifications-page";
+import { SwapHRActionPage } from "@/components/swaps/swap-hr-action-page";
+import { ScheduleSharePage } from "@/components/upload/schedule-share-page";
+import { LoadingState } from "@/components/ui/loading-state";
 
 import { useConsent } from "@/lib/cookies/ConsentContext";
 import { SpeedInsights } from "@vercel/speed-insights/react";
 import type { CalendarSyncPreviewChange } from "@/features/calendar/types";
 import { validateScheduleConstraints } from "@/features/swaps/services/swap-constraints";
+import { runWithToast } from "@/lib/async-toast";
+import {
+  authFailureMessage,
+  feedbackMessages,
+  googleLoginFailureMessage,
+  profileLoadFailureMessage,
+  supabaseLoginFailureMessage,
+  supabaseLogoutFailureMessage,
+  syncPreviewFailureMessage,
+  uploadPartialFailureMessage,
+} from "@/lib/feedback-messages";
 
 const STORAGE_KEYS = {
   ACCESS_TOKEN: "google_access_token",
@@ -181,6 +191,10 @@ function mustShowProfileDialog(
   return needsProfileCompletion(profile);
 }
 
+function normalizeDisplayName(value: string | null | undefined): string {
+  return value?.trim() ?? "";
+}
+
 function Home() {
   const { hasCategory } = useConsent();
   const navigate = useNavigate();
@@ -190,9 +204,15 @@ function Home() {
   const leaveEnabled = isLeaveEnabled();
   const isSwapsRoute = location.pathname.endsWith("/swaps");
   const isLeaveRoute = location.pathname.endsWith("/leave");
+  const isNotificationsRoute = location.pathname.endsWith("/notifications");
+  const isSwapHRActionRoute = location.pathname.includes("/swaps/action");
+  const isScheduleHistoryRoute =
+    location.pathname.endsWith("/schedule-history") ||
+    location.pathname.endsWith("/schedule-share");
   // Authentication state
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string>("");
+  const [userDisplayName, setUserDisplayName] = useState<string>("");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [isRestoringSession, setIsRestoringSession] = useState(true);
@@ -307,12 +327,16 @@ function Home() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [calendarSyncCompatMode, setCalendarSyncCompatMode] = useState(false);
   const [uploadPersistenceOk, setUploadPersistenceOk] = useState(true);
+  const [uploadWorkflowStatus, setUploadWorkflowStatus] = useState<
+    string | null
+  >(null);
   const syncConstraintWarnings = useMemo(
     () =>
       validateScheduleConstraints(buildConstraintInputFromShifts(shifts))
         .violations,
     [shifts],
   );
+  const headerDisplayName = userDisplayName || userEmail;
 
   const loadUserProfile = async (userId: string) => {
     try {
@@ -320,6 +344,10 @@ function Home() {
         backend.users.getUserProfile(userId),
         SESSION_RESTORE_TIMEOUT_MS,
       );
+
+      setUserDisplayName(normalizeDisplayName(profile?.fullName));
+      setProfileInitialName(profile?.fullName ?? "");
+      setProfileInitialCode(profile?.employeeCode ?? "");
 
       if (mustShowProfileDialog(userId, profile)) {
         setProfileInitialName(profile?.fullName ?? "");
@@ -458,7 +486,7 @@ function Home() {
       } else {
         // Token is invalid/expired, clear storage
         clearSession();
-        toast.error("Sessão expirada, por favor inicie sessão novamente");
+        toast.error(feedbackMessages.sessionExpired);
       }
     } catch {
       // Network error or token invalid
@@ -473,6 +501,7 @@ function Home() {
     localStorage.removeItem(STORAGE_KEYS.USER_EMAIL);
     setAccessToken(null);
     setUserEmail("");
+    setUserDisplayName("");
     setCurrentUserId(null);
     setProfileDialogOpen(false);
     setCurrentStep("auth");
@@ -509,15 +538,15 @@ function Home() {
 
         setCurrentStep("upload");
         setAuthLoading(false);
-        toast.success("Autenticação bem-sucedida!");
+        toast.success(feedbackMessages.authenticationSuccess);
       } catch (err) {
         setAuthLoading(false);
-        toast.error("Falha na autenticação: " + getErrorMessage(err));
+        toast.error(authFailureMessage(err));
       }
     },
     onError: (error) => {
       setAuthLoading(false);
-      toast.error("Falha no login Google: " + getErrorMessage(error));
+      toast.error(googleLoginFailureMessage(error));
     },
     scope: "openid email profile https://www.googleapis.com/auth/calendar",
   });
@@ -533,9 +562,7 @@ function Home() {
         window.location.assign(oauthUrl);
       } catch (error) {
         setAuthLoading(false);
-        toast.error(
-          "Falha no login Supabase/Google: " + getErrorMessage(error),
-        );
+        toast.error(supabaseLoginFailureMessage(error));
       }
 
       return;
@@ -557,21 +584,35 @@ function Home() {
     setShifts(processedShifts);
     setSelectedEmployeeName(employeeName || "");
     setCurrentStep("preview");
+    setUploadWorkflowStatus("Upload recebido. A processar importação...");
 
     if (context && currentUserId) {
       try {
-        const upload = await persistUploadMetadata({
-          userId: currentUserId,
-          file: context.sourceFile,
-          consentToShare: context.consentToShare,
-          parsedResult: context.parsedResult,
-          selectedEmployeeName: employeeName,
-          selectedEmployeeShifts: processedShifts,
-        });
+        const upload = await runWithToast(
+          () =>
+            persistUploadMetadata({
+              userId: currentUserId,
+              file: context.sourceFile,
+              consentToShare: context.consentToShare,
+              parsedResult: context.parsedResult,
+              selectedEmployeeName: employeeName,
+              selectedEmployeeShifts: processedShifts,
+            }),
+          {
+            loading: "A importar horário...",
+            success: () =>
+              `${processedShifts.length} turnos carregados com sucesso!${employeeName ? ` (${employeeName})` : ""}`,
+            error: uploadPartialFailureMessage,
+          },
+        );
 
         if (upload.resolvedSelectedShifts.length > 0) {
           setShifts(upload.resolvedSelectedShifts);
         }
+
+        setUploadWorkflowStatus(
+          "Importação concluída. Estado interno de turnos atualizado. A preparar calendário de trocas...",
+        );
 
         const shared = await detectSharedScheduleByHash(upload.fileHash);
         if (shared.isShared) {
@@ -579,20 +620,25 @@ function Home() {
             `Upload partilhado detectado (${shared.matchingCount} correspondências consentidas).`,
           );
         }
+
+        setUploadWorkflowStatus(
+          "Upload sincronizado internamente. Pode abrir o calendário de trocas quando quiser.",
+        );
       } catch (error) {
         setUploadPersistenceOk(false);
-        toast.warning(
-          `Upload persistido parcialmente: ${getErrorMessage(error)}`,
+        setUploadWorkflowStatus(
+          `Importação parcial: ${getErrorMessage(error)}.`,
         );
-        toast.warning(
-          "Para evitar eliminações incorretas, a remoção automática de eventos foi desativada nesta sincronização.",
-        );
+        toast.warning(feedbackMessages.uploadSafetyFallback);
+        return;
       }
     }
 
-    toast.success(
-      `${processedShifts.length} turnos carregados com sucesso!${employeeName ? ` (${employeeName})` : ""}`,
-    );
+    if (!context || !currentUserId) {
+      toast.success(
+        `${processedShifts.length} turnos carregados com sucesso!${employeeName ? ` (${employeeName})` : ""}`,
+      );
+    }
   };
 
   const resolveEffectiveUserId = () => currentUserId ?? userEmail;
@@ -610,7 +656,7 @@ function Home() {
 
     const effectiveUserId = resolveEffectiveUserId();
     if (!effectiveUserId) {
-      toast.error("Sessão de utilizador não encontrada");
+      toast.error(feedbackMessages.missingUserSession);
       return;
     }
 
@@ -650,9 +696,7 @@ function Home() {
       });
       setPreviewChanges(preview.changes ?? []);
     } catch (error) {
-      toast.error(
-        `Falha no preview de sincronização: ${getErrorMessage(error)}`,
-      );
+      toast.error(syncPreviewFailureMessage(error));
     } finally {
       setPreviewLoading(false);
     }
@@ -684,7 +728,7 @@ function Home() {
 
     const effectiveUserId = resolveEffectiveUserId();
     if (!effectiveUserId) {
-      toast.error("Sessão de utilizador não encontrada");
+      toast.error(feedbackMessages.missingUserSession);
       return;
     }
 
@@ -706,14 +750,23 @@ function Home() {
     setSyncing(true);
 
     try {
-      const result = await backend.calendar.runSync(shifts, {
-        userId: effectiveUserId,
-        accessToken,
-        calendarId: input.calendarId,
-        dateRange: effectiveOptions.dateRange,
-        fullResync: effectiveOptions.fullResync,
-        removeStaleEvents: effectiveOptions.removeStaleEvents,
-      });
+      const result = await runWithToast(
+        () =>
+          backend.calendar.runSync(shifts, {
+            userId: effectiveUserId,
+            accessToken,
+            calendarId: input.calendarId,
+            dateRange: effectiveOptions.dateRange,
+            fullResync: effectiveOptions.fullResync,
+            removeStaleEvents: effectiveOptions.removeStaleEvents,
+          }),
+        {
+          loading: "A sincronizar calendário...",
+          success: "Calendário sincronizado com sucesso!",
+          error: (error) =>
+            `Falha ao sincronizar calendário: ${getErrorMessage(error)}`,
+        },
+      );
 
       // Update the shifts state with the googleEventIds returned from this sync.
       // This ensures subsequent re-syncs find the right events to update.
@@ -756,7 +809,6 @@ function Home() {
 
       setShowConfirmModal(false);
       setShowSuccessModal(true);
-      toast.success("Calendário sincronizado com sucesso!");
 
       if (result.errors.length > 0) {
         console.warn(
@@ -764,8 +816,7 @@ function Home() {
           result.errors,
         );
       }
-    } catch (err) {
-      toast.error("Falha ao sincronizar calendário: " + getErrorMessage(err));
+    } catch {
     } finally {
       setSyncing(false);
     }
@@ -783,32 +834,31 @@ function Home() {
       try {
         await signOutSupabase();
       } catch (error) {
-        toast.error(
-          "Falha ao terminar sessão Supabase: " + getErrorMessage(error),
-        );
+        toast.error(supabaseLogoutFailureMessage(error));
       }
     }
 
     clearSession();
     setSelectedCalendar(null);
     setShifts([]);
-    toast.info("Sessão terminada com sucesso");
+    toast.info(feedbackMessages.sessionLogoutSuccess);
   };
 
   const handleTokenExpired = () => {
     clearSession();
-    toast.error("Sessão expirada, por favor inicie sessão novamente");
+    toast.error(feedbackMessages.sessionExpired);
   };
 
   const handleOpenSettings = async () => {
     if (!currentUserId) {
-      toast.error("Sessão de utilizador não encontrada");
+      toast.error(feedbackMessages.missingUserSession);
       return;
     }
 
     try {
       const profile = await backend.users.getUserProfile(currentUserId);
       const hrSettings = await backend.swaps.getHRSettings(currentUserId);
+      setUserDisplayName(normalizeDisplayName(profile?.fullName));
       setSettingsInitialName(profile?.fullName ?? "");
       setSettingsInitialCode(profile?.employeeCode ?? "");
       setSettingsInitialEmail(profile?.email ?? userEmail);
@@ -821,7 +871,7 @@ function Home() {
       setSettingsLastUpdatedAt(profile?.updatedAt ?? null);
       setSettingsDialogOpen(true);
     } catch (error) {
-      toast.error(`Falha ao carregar perfil: ${getErrorMessage(error)}`);
+      toast.error(profileLoadFailureMessage(error));
     }
   };
 
@@ -829,10 +879,7 @@ function Home() {
   if (isRestoringSession) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-muted-foreground">A restaurar sessão...</p>
-        </div>
+        <LoadingState message="A restaurar sessão..." />
       </div>
     );
   }
@@ -840,6 +887,11 @@ function Home() {
   // Authentication screen
   if (currentStep === "auth") {
     return <AuthCard onSignIn={handleSignIn} loading={authLoading} />;
+  }
+
+  // HR decision link — standalone page, no dashboard chrome
+  if (isSwapHRActionRoute) {
+    return <SwapHRActionPage service={backend.swaps} />;
   }
 
   // Main dashboard
@@ -853,72 +905,33 @@ function Home() {
         )}
 
         <DashboardHeader
-          email={userEmail}
+          displayName={headerDisplayName}
           onLogout={handleLogout}
           onOpenSettings={handleOpenSettings}
           onOpenSwaps={() => navigate("/home/swaps")}
+          onOpenLeave={() => navigate("/home/leave")}
+          onOpenHistory={() => navigate("/home/schedule-share")}
           onOpenDashboard={() => navigate("/home")}
-          swapsActive={isSwapsRoute || isLeaveRoute}
+          activeSection={
+            isSwapsRoute
+              ? "swaps"
+              : isLeaveRoute
+                ? "leave"
+                : isScheduleHistoryRoute
+                  ? "history"
+                  : isNotificationsRoute
+                    ? "notifications"
+                    : "home"
+          }
+          leaveEnabled={leaveEnabled}
+          userId={currentUserId ?? undefined}
+          notificationService={backend.notifications}
+          onOpenNotifications={() => navigate("/home/notifications")}
         />
 
-        {!isSwapsRoute && !isLeaveRoute && currentUserId && (
-          <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-slate-900">
-                  Centro de Trocas
-                </p>
-                <p className="text-xs text-slate-600">
-                  {swapsEnabled
-                    ? "Aceda rapidamente a disponibilidade e pedidos de troca."
-                    : "Trocas estao desativadas neste ambiente. Ative VITE_ENABLE_SWAPS=true para mostrar a UI de trocas."}
-                </p>
-              </div>
-
-              {swapsEnabled ? (
-                <button
-                  type="button"
-                  onClick={() => navigate("/home/swaps")}
-                  className="inline-flex items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
-                >
-                  Open Swap Calendar
-                </button>
-              ) : (
-                <span className="inline-flex items-center rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-                  Funcionalidade desativada
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-
-        {!isSwapsRoute && !isLeaveRoute && currentUserId && (
-          <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-slate-900">
-                  Gestão de Ausências
-                </p>
-                <p className="text-xs text-slate-600">
-                  {leaveEnabled
-                    ? "Submeta e acompanhe pedidos de férias, doença e ausências."
-                    : "Ausências desativadas neste ambiente. Ative VITE_ENABLE_LEAVE=true para mostrar."}
-                </p>
-              </div>
-              {leaveEnabled ? (
-                <button
-                  type="button"
-                  onClick={() => navigate("/home/leave")}
-                  className="inline-flex items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
-                >
-                  Ver Ausências
-                </button>
-              ) : (
-                <span className="inline-flex items-center rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-                  Funcionalidade desativada
-                </span>
-              )}
-            </div>
+        {uploadWorkflowStatus && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs sm:text-sm text-blue-900">
+            {uploadWorkflowStatus}
           </div>
         )}
 
@@ -945,7 +958,26 @@ function Home() {
           />
         ) : null}
 
-        {!isSwapsRoute && !isLeaveRoute ? (
+        {isNotificationsRoute && currentUserId ? (
+          <NotificationsPage
+            userId={currentUserId}
+            service={backend.notifications}
+          />
+        ) : null}
+
+        {isScheduleHistoryRoute && currentUserId ? (
+          <ScheduleSharePage
+            userId={currentUserId}
+            service={backend.uploads}
+            accessToken={accessToken ?? undefined}
+            defaultCalendarId={selectedCalendar}
+          />
+        ) : null}
+
+        {!isSwapsRoute &&
+        !isLeaveRoute &&
+        !isNotificationsRoute &&
+        !isScheduleHistoryRoute ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
             <div className="lg:col-span-1 space-y-4 sm:space-y-6">
               <CalendarSelector
@@ -972,10 +1004,6 @@ function Home() {
                   onFileProcessed={handleFileProcessed}
                   disabled={false}
                 />
-              )}
-
-              {isSharedRecoveryEnabled() && currentUserId && (
-                <SharedScheduleRecoveryCard userId={currentUserId} />
               )}
             </div>
 
@@ -1033,9 +1061,10 @@ function Home() {
               email,
             });
             localStorage.setItem(profileAckKey(currentUserId), "1");
+            setUserDisplayName(fullName.trim());
             setUserEmail(email);
             setProfileDialogOpen(false);
-            toast.success("Perfil atualizado com sucesso");
+            toast.success(feedbackMessages.profileUpdated);
           }}
         />
 
@@ -1074,6 +1103,7 @@ function Home() {
             );
 
             setUserEmail(email);
+            setUserDisplayName(fullName.trim());
             setSettingsInitialName(fullName);
             setSettingsInitialCode(employeeCode);
             setSettingsInitialEmail(email);
@@ -1115,11 +1145,10 @@ function Home() {
             }
 
             setSettingsDialogOpen(false);
-            toast.success("Perfil atualizado nas configurações");
+            toast.success(feedbackMessages.profileUpdatedInSettings);
           }}
         />
       </div>
-      {hasCategory("analytics") && <SpeedInsights />}
       <SpeedInsights />
       <Footer />
     </div>

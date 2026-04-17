@@ -26,6 +26,15 @@ import { dispatchLeaveStatusChange } from "@/features/notifications/notification
 import { toast } from "sonner";
 import { LeaveRequestForm } from "@/components/leave/LeaveRequestForm";
 import { LeaveRequestList } from "@/components/leave/LeaveRequestList";
+import {
+  LoadingListSkeleton,
+  LoadingState,
+} from "@/components/ui/loading-state";
+import { runWithToast } from "@/lib/async-toast";
+import {
+  feedbackMessages,
+  invalidTransitionMessage,
+} from "@/lib/feedback-messages";
 import type {
   LeaveApproveInput,
   LeaveRejectInput,
@@ -56,6 +65,9 @@ export function LeaveScreen({
   defaultCalendarId,
 }: LeaveScreenProps) {
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
+  const [requestsPage, setRequestsPage] = useState(1);
+  const [requestsPageSize] = useState(10);
+  const [requestsTotal, setRequestsTotal] = useState(0);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -67,17 +79,21 @@ export function LeaveScreen({
     setError(null);
     try {
       const [leaves, userShifts] = await Promise.all([
-        backend.leave.getLeaveRequestsForUser(userId),
+        backend.leave.getLeaveRequestsForUserPaginated(userId, {
+          page: requestsPage,
+          pageSize: requestsPageSize,
+        }),
         backend.shifts.getShiftsForUser(userId),
       ]);
-      setRequests(leaves);
+      setRequests(leaves.items);
+      setRequestsTotal(leaves.total);
       setShifts(userShifts);
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, [userId, backend]);
+  }, [userId, backend, requestsPage, requestsPageSize]);
 
   useEffect(() => {
     void loadData();
@@ -87,12 +103,12 @@ export function LeaveScreen({
 
   function handleCreated(leave: LeaveRequest) {
     setRequests((prev) => [leave, ...prev]);
-    toast.success("Pedido guardado. Use o botão 'Enviar ao RH' para submeter.");
+    toast.success(feedbackMessages.leaveSavedDraft);
   }
 
   async function handleSentToHR(leave: LeaveRequest) {
     setRequests((prev) => prev.map((r) => (r.id === leave.id ? leave : r)));
-    toast.success("Email ao RH aberto. Pedido marcado como pendente.");
+    toast.success(feedbackMessages.leaveSentToHR);
     try {
       await dispatchLeaveStatusChange(backend.notifications, leave);
     } catch {
@@ -107,30 +123,33 @@ export function LeaveScreen({
     try {
       assertLeaveStatusTransition(request.status, "approved");
     } catch {
-      toast.error(`Transição inválida: ${request.status} → aprovado`);
+      toast.error(invalidTransitionMessage(request.status, "aprovado"));
       return;
     }
 
     setBusyId(request.id);
     try {
-      const updated = await backend.leave.approveLeaveRequest(request.id, {
-        approvedStartDate: input.approvedStartDate,
-        approvedEndDate: input.approvedEndDate,
-        hrResponseNotes: input.hrResponseNotes,
-      });
+      const updated = await runWithToast(
+        () =>
+          backend.leave.approveLeaveRequest(request.id, {
+            approvedStartDate: input.approvedStartDate,
+            approvedEndDate: input.approvedEndDate,
+            hrResponseNotes: input.hrResponseNotes,
+          }),
+        {
+          loading: "A aprovar pedido...",
+          success: `Pedido ${formatLeaveStatus("approved").toLowerCase()} com sucesso.`,
+        },
+      );
       setRequests((prev) =>
         prev.map((r) => (r.id === updated.id ? updated : r)),
-      );
-      toast.success(
-        `Pedido ${formatLeaveStatus("approved").toLowerCase()} com sucesso.`,
       );
       try {
         await dispatchLeaveStatusChange(backend.notifications, updated);
       } catch {
         // non-fatal
       }
-    } catch (err) {
-      toast.error(getErrorMessage(err));
+    } catch {
     } finally {
       setBusyId(null);
     }
@@ -140,28 +159,31 @@ export function LeaveScreen({
     try {
       assertLeaveStatusTransition(request.status, "rejected");
     } catch {
-      toast.error(`Transição inválida: ${request.status} → rejeitado`);
+      toast.error(invalidTransitionMessage(request.status, "rejeitado"));
       return;
     }
 
     setBusyId(request.id);
     try {
-      const updated = await backend.leave.rejectLeaveRequest(request.id, {
-        hrResponseNotes: input.hrResponseNotes,
-      });
+      const updated = await runWithToast(
+        () =>
+          backend.leave.rejectLeaveRequest(request.id, {
+            hrResponseNotes: input.hrResponseNotes,
+          }),
+        {
+          loading: "A rejeitar pedido...",
+          success: `Pedido ${formatLeaveStatus("rejected").toLowerCase()} com sucesso.`,
+        },
+      );
       setRequests((prev) =>
         prev.map((r) => (r.id === updated.id ? updated : r)),
-      );
-      toast.success(
-        `Pedido ${formatLeaveStatus("rejected").toLowerCase()} com sucesso.`,
       );
       try {
         await dispatchLeaveStatusChange(backend.notifications, updated);
       } catch {
         // non-fatal
       }
-    } catch (err) {
-      toast.error(getErrorMessage(err));
+    } catch {
     } finally {
       setBusyId(null);
     }
@@ -174,17 +196,17 @@ export function LeaveScreen({
   ) {
     setBusyId(request.id);
     try {
-      const updated = await backend.leave.updateApprovedDates(
-        request.id,
-        start,
-        end,
+      const updated = await runWithToast(
+        () => backend.leave.updateApprovedDates(request.id, start, end),
+        {
+          loading: "A atualizar datas aprovadas...",
+          success: "Datas aprovadas actualizadas.",
+        },
       );
       setRequests((prev) =>
         prev.map((r) => (r.id === updated.id ? updated : r)),
       );
-      toast.success("Datas aprovadas actualizadas.");
-    } catch (err) {
-      toast.error(getErrorMessage(err));
+    } catch {
     } finally {
       setBusyId(null);
     }
@@ -192,22 +214,31 @@ export function LeaveScreen({
 
   async function handleCalendarSync(request: LeaveRequest) {
     if (!accessToken) {
-      toast.error("Sem token de acesso Google. Faz login novamente.");
+      toast.error(feedbackMessages.missingGoogleToken);
       return;
     }
     if (!defaultCalendarId) {
-      toast.error(
-        "Nenhum calendário padrão configurado. Vai às definições e seleciona um calendário.",
-      );
+      toast.error(feedbackMessages.missingDefaultCalendar);
       return;
     }
 
     setSyncingId(request.id);
     try {
-      const result = await syncLeaveToCalendar(
-        request,
-        accessToken,
-        defaultCalendarId,
+      const result = await runWithToast(
+        () => syncLeaveToCalendar(request, accessToken, defaultCalendarId),
+        {
+          loading: "A sincronizar ausência no calendário...",
+          success: (result) => {
+            const actionLabel =
+              result.action === "created"
+                ? "Evento criado"
+                : result.action === "updated"
+                  ? "Evento atualizado"
+                  : "Calendário já sincronizado";
+            return `${actionLabel} no calendário.`;
+          },
+          error: (error) => `Erro ao sincronizar: ${getErrorMessage(error)}`,
+        },
       );
       // Persist google_event_id + leave_uid back to DB
       const updated = await backend.leave.recordCalendarSync(request.id, {
@@ -218,16 +249,7 @@ export function LeaveScreen({
       setRequests((prev) =>
         prev.map((r) => (r.id === updated.id ? updated : r)),
       );
-
-      const actionLabel =
-        result.action === "created"
-          ? "Evento criado"
-          : result.action === "updated"
-            ? "Evento atualizado"
-            : "Calendário já sincronizado";
-      toast.success(`${actionLabel} no calendário.`);
-    } catch (err) {
-      toast.error(`Erro ao sincronizar: ${getErrorMessage(err)}`);
+    } catch {
     } finally {
       setSyncingId(null);
     }
@@ -258,6 +280,7 @@ export function LeaveScreen({
           userId={userId}
           userShifts={shifts}
           leaveService={backend.leave}
+          reminderService={backend.reminders}
           hrEmail={hrEmail}
           ccEmails={ccEmails}
           employeeName={employeeName}
@@ -279,13 +302,21 @@ export function LeaveScreen({
         </div>
 
         {loading ? (
-          <p className="text-sm text-slate-500">A carregar pedidos...</p>
+          <div className="space-y-3">
+            <LoadingState message="A carregar pedidos..." inline />
+            <LoadingListSkeleton rows={3} />
+          </div>
         ) : error ? (
           <p className="text-sm text-rose-600">{error}</p>
         ) : (
           <LeaveRequestList
             requests={requests}
             userId={userId}
+            page={requestsPage}
+            pageSize={requestsPageSize}
+            total={requestsTotal}
+            loading={loading}
+            onPageChange={setRequestsPage}
             onApprove={(r, input) => void handleApprove(r, input)}
             onReject={(r, input) => void handleReject(r, input)}
             onCalendarSync={(r) => void handleCalendarSync(r)}

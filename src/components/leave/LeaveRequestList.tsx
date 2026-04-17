@@ -8,6 +8,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { LeaveRequest } from "@/types/domain";
+import { PaginatedListControls } from "@/components/ui/paginated-list-controls";
+import {
+  LoadingListSkeleton,
+  LoadingState,
+} from "@/components/ui/loading-state";
 import {
   LeaveRequestCard,
   type LeaveApproveInput,
@@ -60,6 +65,11 @@ interface LeaveRequestListProps {
     start: string,
     end: string,
   ) => void;
+  page: number;
+  pageSize: number;
+  total: number;
+  loading?: boolean;
+  onPageChange: (page: number) => void;
   busyId?: string | null;
   syncingId?: string | null;
 }
@@ -72,6 +82,11 @@ export function LeaveRequestList({
   onReject,
   onCalendarSync,
   onUpdateApprovedDates,
+  page,
+  pageSize,
+  total,
+  loading = false,
+  onPageChange,
   busyId,
   syncingId,
 }: LeaveRequestListProps) {
@@ -156,6 +171,15 @@ export function LeaveRequestList({
   }, [seen, grouped]);
 
   const renderList = (items: LeaveRequest[]) => {
+    if (loading && items.length === 0) {
+      return (
+        <div className="space-y-3">
+          <LoadingState message="A carregar pedidos..." inline />
+          <LoadingListSkeleton rows={3} />
+        </div>
+      );
+    }
+
     if (items.length === 0) {
       return <p className="text-sm text-slate-500">Sem pedidos nesta vista.</p>;
     }
@@ -213,6 +237,14 @@ export function LeaveRequestList({
       <TabsContent value="todos" className="mt-3">
         {renderList(grouped.todos)}
       </TabsContent>
+
+      <PaginatedListControls
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        loading={loading}
+        onPageChange={onPageChange}
+      />
     </Tabs>
   );
 }

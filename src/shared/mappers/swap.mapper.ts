@@ -94,6 +94,24 @@ export function toSwapRequest(row: DbSwapRequestRow): SwapRequest {
     calendarApplied:
       (row as unknown as { calendar_applied?: boolean }).calendar_applied ??
       false,
+    hrDecisionTokenExpiresAt:
+      (row as unknown as { hr_decision_token_expires_at?: string | null })
+        .hr_decision_token_expires_at ?? null,
+    hrDecisionActionedAt:
+      (row as unknown as { hr_decision_actioned_at?: string | null })
+        .hr_decision_actioned_at ?? null,
+    hrDecisionAction:
+      (
+        row as unknown as {
+          hr_decision_action?: "approve" | "decline" | null;
+        }
+      ).hr_decision_action ?? null,
+    hrDecisionBy:
+      (row as unknown as { hr_decision_by?: string | null }).hr_decision_by ??
+      null,
+    hrDecisionReason:
+      (row as unknown as { hr_decision_reason?: string | null })
+        .hr_decision_reason ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
