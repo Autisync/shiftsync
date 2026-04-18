@@ -33,6 +33,10 @@ const STATUS_META: Record<
     label: "Aviso 6/60",
     className: "bg-rose-50 text-rose-700 border-rose-200",
   },
+  leave: {
+    label: "Ausencia",
+    className: "bg-cyan-50 text-cyan-700 border-cyan-200",
+  },
 };
 
 interface SwapStatusBadgeProps {

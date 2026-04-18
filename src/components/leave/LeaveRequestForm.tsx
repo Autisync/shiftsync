@@ -8,6 +8,7 @@ import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { CalendarIcon } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -27,6 +28,11 @@ import type {
   LeaveService,
   ReminderService,
 } from "@/services/backend/types";
+import {
+  generateGmailComposeLink,
+  generateMailtoLink,
+  generateOutlookComposeLink,
+} from "@/lib/swap-email-template";
 import { AlertTriangle, Mail, Save } from "lucide-react";
 import {
   Dialog,
@@ -36,6 +42,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface LeaveRequestFormProps {
   userId: string;
@@ -51,6 +58,37 @@ interface LeaveRequestFormProps {
 }
 
 const NOTICE_POLICY_DAYS = 45;
+
+interface LeaveComposeLinks {
+  to: string;
+  cc: string;
+  mailto: string;
+  gmailCompose: string;
+  outlookCompose: string;
+}
+
+function buildComposeLinks(preview: EmailPreviewPayload): LeaveComposeLinks {
+  const to = preview.to.join(",");
+  const cc = preview.cc.join(",");
+
+  return {
+    to,
+    cc,
+    mailto: generateMailtoLink(preview.subject, preview.body, to, cc),
+    gmailCompose: generateGmailComposeLink(
+      preview.subject,
+      preview.body,
+      to,
+      cc,
+    ),
+    outlookCompose: generateOutlookComposeLink(
+      preview.subject,
+      preview.body,
+      to,
+      cc,
+    ),
+  };
+}
 
 function daysUntil(dateIso: string): number {
   const start = new Date(`${dateIso}T00:00:00`).getTime();
@@ -76,6 +114,7 @@ export function LeaveRequestForm({
   onSentToHR,
 }: LeaveRequestFormProps) {
   const today = new Date().toISOString().slice(0, 10);
+  const isMobile = useIsMobile();
 
   const [type, setType] = useState("vacation");
   // For vacation: use DateRange from react-day-picker; for other types: two text inputs
@@ -107,6 +146,8 @@ export function LeaveRequestForm({
   const [draft, setDraft] = useState<LeaveRequest | null>(null);
   const [preview, setPreview] = useState<EmailPreviewPayload | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+
+  const composeLinks = preview ? buildComposeLinks(preview) : null;
 
   const isSpotRequest = type === "personal";
   const noticeDays = daysUntil(effectiveStart);
@@ -201,6 +242,12 @@ export function LeaveRequestForm({
     setConfirming(true);
 
     try {
+      if (composeLinks) {
+        // Trigger user's own email client using mailto before persisting the
+        // "sent to HR" state, so submission always opens an outbound draft.
+        window.location.href = composeLinks.mailto;
+      }
+
       const updated = await leaveService.confirmLeaveSubmission({
         leaveRequestId: draft.id,
         emailPreview: preview,
@@ -222,6 +269,9 @@ export function LeaveRequestForm({
       setVacationRange(undefined);
       setNotes("");
       setAttachments([]);
+      toast.success(
+        "Rascunho de email aberto no seu cliente e pedido enviado ao RH.",
+      );
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -297,12 +347,15 @@ export function LeaveRequestForm({
                     )}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
+                <PopoverContent
+                  className="w-[calc(100vw-2rem)] max-w-sm p-0 sm:w-auto sm:max-w-none"
+                  align="start"
+                >
                   <Calendar
                     mode="range"
                     selected={vacationRange}
                     onSelect={setVacationRange}
-                    numberOfMonths={2}
+                    numberOfMonths={isMobile ? 1 : 2}
                     disabled={{ before: new Date() }}
                   />
                 </PopoverContent>
@@ -448,16 +501,16 @@ export function LeaveRequestForm({
       </form>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="w-[calc(100vw-1rem)] max-w-2xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle>Pré-visualização do Email</DialogTitle>
             <DialogDescription>
-              Confirme o conteúdo exato antes do envio final ao RH.
+              Confirme o conteúdo exato e envie pelo seu próprio email.
             </DialogDescription>
           </DialogHeader>
 
           {preview ? (
-            <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+            <div className="min-w-0 space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs sm:text-sm text-slate-700">
               <p>
                 <span className="font-semibold">Assunto:</span>{" "}
                 {preview.subject}
@@ -472,7 +525,7 @@ export function LeaveRequestForm({
               </p>
               <div>
                 <p className="mb-1 font-semibold">Corpo:</p>
-                <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded border border-slate-200 bg-white p-2 text-xs text-slate-800">
+                <pre className="max-h-32 sm:max-h-48 overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded border border-slate-200 bg-white p-2 text-xs text-slate-800">
                   {preview.body}
                 </pre>
               </div>
@@ -481,7 +534,7 @@ export function LeaveRequestForm({
                 {preview.attachments.length === 0 ? (
                   <p>-</p>
                 ) : (
-                  <ul className="space-y-1">
+                  <ul className="space-y-1 break-words [overflow-wrap:anywhere]">
                     {preview.attachments.map((item) => (
                       <li key={`${item.fileName}-${item.fileSize ?? 0}`}>
                         {item.fileName}
@@ -490,15 +543,43 @@ export function LeaveRequestForm({
                   </ul>
                 )}
               </div>
+
+              {composeLinks ? (
+                <div className="min-w-0 flex flex-col sm:flex-row flex-wrap gap-2 pt-1">
+                  <a
+                    href={composeLinks.gmailCompose}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 sm:flex-initial inline-flex items-center justify-center sm:justify-start rounded border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-900"
+                  >
+                    Abrir Gmail
+                  </a>
+                  <a
+                    href={composeLinks.outlookCompose}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 sm:flex-initial inline-flex items-center justify-center sm:justify-start rounded border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-900"
+                  >
+                    Abrir Outlook
+                  </a>
+                  <a
+                    href={composeLinks.mailto}
+                    className="flex-1 sm:flex-initial inline-flex items-center justify-center sm:justify-start rounded border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-900"
+                  >
+                    Abrir app de Email
+                  </a>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
-          <DialogFooter>
+          <DialogFooter className="flex flex-col-reverse sm:flex-row gap-2 sm:gap-0">
             <Button
               type="button"
               variant="outline"
               onClick={() => setPreviewOpen(false)}
               disabled={confirming}
+              className="w-full sm:w-auto"
             >
               Fechar
             </Button>
@@ -506,9 +587,19 @@ export function LeaveRequestForm({
               type="button"
               onClick={() => void handleConfirmSend()}
               disabled={confirming}
+              className="w-full sm:w-auto"
             >
               <Mail className="mr-1.5 h-3.5 w-3.5" />
-              {confirming ? "A enviar..." : "Confirmar e enviar"}
+              {confirming ? (
+                "A enviar..."
+              ) : (
+                <>
+                  <span className="hidden sm:inline">
+                    Confirmar e enviar pelo meu email
+                  </span>
+                  <span className="sm:hidden">Confirmar</span>
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

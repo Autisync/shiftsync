@@ -24,3 +24,6 @@ verify_jwt = false
 
 [functions."swap-hr-actions"]
 verify_jwt = false
+
+[functions."leave-hr-actions"]
+verify_jwt = false

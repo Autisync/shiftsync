@@ -12,14 +12,8 @@ import { SyncConfirmationModal } from "@/components/sync/sync-confirmation-modal
 import { SuccessModal } from "@/components/sync/success-modal";
 import { ShiftData, SyncSummary, ParsedScheduleResult } from "@/types/shift";
 import { getErrorMessage } from "@/lib/getErrorMessage";
-import {
-  getSupabaseSession,
-  onSupabaseAuthChange,
-  signInWithSupabaseGoogle,
-  signOutSupabase,
-} from "@/lib/supabase-auth";
-import { isSupabaseConfigured } from "@/lib/supabase-client";
 import { getBackend } from "@/services/backend/backend-provider";
+import { getConfig } from "@/config/env";
 import type { CalendarSyncRunOptions } from "@/services/backend/types";
 import { toast } from "sonner";
 import Footer from "../components/Footer";
@@ -33,6 +27,7 @@ import { SwapsCalendarScreen } from "@/components/swaps/swaps-calendar-screen";
 import { LeaveScreen } from "@/components/leave/leave-screen";
 import { NotificationsPage } from "@/components/notifications/notifications-page";
 import { SwapHRActionPage } from "@/components/swaps/swap-hr-action-page";
+import { LeaveHRActionPage } from "@/components/leave/leave-hr-action-page";
 import { ScheduleSharePage } from "@/components/upload/schedule-share-page";
 import { LoadingState } from "@/components/ui/loading-state";
 
@@ -206,6 +201,7 @@ function Home() {
   const isLeaveRoute = location.pathname.endsWith("/leave");
   const isNotificationsRoute = location.pathname.endsWith("/notifications");
   const isSwapHRActionRoute = location.pathname.includes("/swaps/action");
+  const isLeaveHRActionRoute = location.pathname.includes("/leave/action");
   const isScheduleHistoryRoute =
     location.pathname.endsWith("/schedule-history") ||
     location.pathname.endsWith("/schedule-share");
@@ -381,16 +377,16 @@ function Home() {
 
     const restoreSession = async () => {
       try {
-        if (isSupabaseConfigured) {
+        if (getConfig().backendMode === "supabase") {
           const session = await withTimeout(
-            getSupabaseSession(),
+            backend.auth.getSession(),
             SESSION_RESTORE_TIMEOUT_MS,
           );
 
-          if (session?.user) {
-            const providerAccessToken = session.provider_token || null;
-            const email = session.user.email || "";
-            const userId = session.user.id;
+          if (session) {
+            const providerAccessToken = session.providerToken;
+            const email = session.email;
+            const userId = session.userId;
 
             setAccessToken(providerAccessToken);
             setUserEmail(email);
@@ -436,23 +432,23 @@ function Home() {
   }, []);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
+    if (getConfig().backendMode !== "supabase") {
       return;
     }
 
-    return onSupabaseAuthChange(async (_event, session) => {
-      if (!session?.user) {
+    return backend.auth.onAuthChange(async (session) => {
+      if (!session) {
         return;
       }
 
-      setUserEmail(session.user.email || "");
-      setAccessToken(session.provider_token || null);
-      setCurrentUserId(session.user.id);
+      setUserEmail(session.email);
+      setAccessToken(session.providerToken);
+      setCurrentUserId(session.userId);
       setCurrentStep("upload");
 
-      void loadUserProfile(session.user.id);
-      void loadHrSettings(session.user.id);
-      void loadDefaultCalendarPreference(session.user.id);
+      void loadUserProfile(session.userId);
+      void loadHrSettings(session.userId);
+      void loadDefaultCalendarPreference(session.userId);
     });
   }, [backend.users]);
 
@@ -556,9 +552,9 @@ function Home() {
 
     setAuthLoading(true);
 
-    if (isSupabaseConfigured) {
+    if (getConfig().backendMode === "supabase") {
       try {
-        const oauthUrl = await signInWithSupabaseGoogle();
+        const oauthUrl = await backend.auth.signInWithGoogle();
         window.location.assign(oauthUrl);
       } catch (error) {
         setAuthLoading(false);
@@ -830,9 +826,9 @@ function Home() {
   };
 
   const handleLogout = async () => {
-    if (isSupabaseConfigured) {
+    if (getConfig().backendMode === "supabase") {
       try {
-        await signOutSupabase();
+        await backend.auth.signOut();
       } catch (error) {
         toast.error(supabaseLogoutFailureMessage(error));
       }
@@ -884,14 +880,18 @@ function Home() {
     );
   }
 
-  // Authentication screen
-  if (currentStep === "auth") {
-    return <AuthCard onSignIn={handleSignIn} loading={authLoading} />;
-  }
-
   // HR decision link — standalone page, no dashboard chrome
   if (isSwapHRActionRoute) {
     return <SwapHRActionPage service={backend.swaps} />;
+  }
+
+  if (isLeaveHRActionRoute) {
+    return <LeaveHRActionPage service={backend.leave} />;
+  }
+
+  // Authentication screen
+  if (currentStep === "auth") {
+    return <AuthCard onSignIn={handleSignIn} loading={authLoading} />;
   }
 
   // Main dashboard

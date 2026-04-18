@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +25,8 @@ export function NotificationBell({
 }: NotificationBellProps) {
   const [items, setItems] = useState<AppNotification[]>([]);
   const [unread, setUnread] = useState(0);
+  // Tracks notification IDs seen during this mount to suppress duplicate renders
+  const seenIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     let mounted = true;
@@ -43,7 +45,15 @@ export function NotificationBell({
         notifications.getUnreadCount(userId),
       ]);
       if (!mounted) return;
-      setItems(result.items);
+
+      // Deduplicate: only update state if we received any new IDs
+      const incoming = result.items;
+      const hasNew = incoming.some((item) => !seenIdsRef.current.has(item.id));
+      if (hasNew || seenIdsRef.current.size === 0) {
+        incoming.forEach((item) => seenIdsRef.current.add(item.id));
+        setItems(incoming);
+      }
+
       const normalizedCount =
         Number.isFinite(unreadCount) && unreadCount >= 0
           ? Math.trunc(unreadCount)

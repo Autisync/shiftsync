@@ -1,4 +1,4 @@
-import type { Shift, SwapRequest } from "@/types/domain";
+import type { LeaveRequest, Shift, SwapRequest } from "@/types/domain";
 
 export type SwapCalendarEventStatus =
   | "normal"
@@ -7,15 +7,19 @@ export type SwapCalendarEventStatus =
   | "received"
   | "approved"
   | "rejected"
-  | "violation";
+  | "violation"
+  | "leave";
 
 export interface SwapCalendarEventItem {
   id: string;
+  kind: "shift" | "leave";
   title: string;
   subtitle?: string;
   start: Date;
   end: Date;
-  shift: Shift;
+  allDay?: boolean;
+  shift?: Shift;
+  leaveRequest?: LeaveRequest;
   status: SwapCalendarEventStatus;
   request?: SwapRequest;
   violation?: boolean;

@@ -15,6 +15,7 @@ import { getBackend } from "@/services/backend/backend-provider";
 import type { BackendServices } from "@/services/backend/types";
 import type {
   HRSettings,
+  LeaveRequest,
   Shift,
   SwapAvailability,
   SwapRequest,
@@ -39,9 +40,9 @@ import type {
 } from "@/components/swaps/swap-calendar.types";
 import { SwapSuggestionCard } from "@/components/swaps/SwapSuggestionCard";
 import { LoadingState } from "@/components/ui/loading-state";
-import { getSupabaseClient } from "@/lib/supabase-client";
 import type { ShiftData } from "@/types/shift";
 import { runWithToast } from "@/lib/async-toast";
+import { useRealtime } from "@/features/notifications/use-realtime";
 
 interface SwapsCalendarScreenProps {
   userId: string;
@@ -49,7 +50,10 @@ interface SwapsCalendarScreenProps {
   accessToken?: string | null;
   calendarId?: string | null;
   onOpenSettings?: () => void;
-  backend?: Pick<BackendServices, "shifts" | "swaps" | "users" | "calendar">;
+  backend?: Pick<
+    BackendServices,
+    "shifts" | "swaps" | "users" | "calendar" | "leave"
+  >;
 }
 
 interface SwapHrEmailDraft {
@@ -180,6 +184,7 @@ export function SwapsCalendarScreen({
   const [calendarView, setCalendarView] = useState<View>("month");
 
   const [ownShifts, setOwnShifts] = useState<Shift[]>([]);
+  const [syncedLeaves, setSyncedLeaves] = useState<LeaveRequest[]>([]);
   const [openAvailabilities, setOpenAvailabilities] = useState<
     Array<{ shift: Shift; availability: SwapAvailability }>
   >([]);
@@ -240,7 +245,7 @@ export function SwapsCalendarScreen({
   );
 
   const selectedShiftSuggestions = useMemo(() => {
-    if (!selectedEvent) return [];
+    if (!selectedEvent?.shift) return [];
     return matches.filter(
       (match) => match.ownShift.id === selectedEvent.shift.id,
     );
@@ -252,7 +257,7 @@ export function SwapsCalendarScreen({
   }, [calendarDate, matches]);
 
   const calendarEvents = useMemo<SwapCalendarEventItem[]>(() => {
-    return ownShifts
+    const shiftEvents = ownShifts
       .filter((shift) => shift.status !== "deleted")
       .map((shift) => {
         const derived = deriveStatusForShift(
@@ -263,6 +268,7 @@ export function SwapsCalendarScreen({
         );
         return {
           id: shift.id,
+          kind: "shift" as const,
           title: `Turno ${new Date(shift.startsAt).toLocaleTimeString("pt-PT", {
             hour: "2-digit",
             minute: "2-digit",
@@ -274,24 +280,53 @@ export function SwapsCalendarScreen({
             derived.status === "open" ? "Disponivel para troca" : undefined,
           start: new Date(shift.startsAt),
           end: new Date(shift.endsAt),
+          allDay: false,
           shift,
           status: derived.status,
           request: derived.request,
           violation: derived.violation,
         };
       });
-  }, [ownShifts, openOwnShiftIds, swapRequests, userId]);
+
+    const leaveEvents = syncedLeaves.map((leave) => {
+      const start = new Date(
+        `${leave.approvedStartDate ?? leave.startDate}T00:00:00`,
+      );
+      const inclusiveEnd = new Date(
+        `${leave.approvedEndDate ?? leave.endDate}T00:00:00`,
+      );
+      inclusiveEnd.setDate(inclusiveEnd.getDate() + 1);
+
+      return {
+        id: `leave-${leave.id}`,
+        kind: "leave" as const,
+        title: `Ausencia ${leave.type === "vacation" ? "- Ferias" : "- " + leave.type}`,
+        subtitle:
+          leave.hrResponseNotes ?? "Ausencia sincronizada no calendario",
+        start,
+        end: inclusiveEnd,
+        allDay: true,
+        leaveRequest: leave,
+        status: "leave" as const,
+      };
+    });
+
+    return [...shiftEvents, ...leaveEvents].sort(
+      (left, right) => left.start.getTime() - right.start.getTime(),
+    );
+  }, [ownShifts, openOwnShiftIds, swapRequests, syncedLeaves, userId]);
 
   const loadData = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [shifts, availabilities, requests] = await Promise.all([
+      const [shifts, availabilities, requests, leaves] = await Promise.all([
         api.shifts.getShiftsForUser(userId),
         api.swaps.getOpenAvailabilities(),
         api.swaps.getSwapRequestsForUserPaginated(userId, {
           page: requestsPage,
           pageSize: requestsPageSize,
         }),
+        api.leave.getLeaveRequestsForUser(userId),
       ]);
 
       const participantIds = Array.from(
@@ -379,6 +414,16 @@ export function SwapsCalendarScreen({
       );
 
       setOwnShifts(shifts);
+      setSyncedLeaves(
+        leaves.filter(
+          (leave) =>
+            leave.status === "approved" &&
+            Boolean(leave.calendarAppliedAt) &&
+            (!resolvedCalendarId ||
+              !leave.lastSyncedCalendarId ||
+              leave.lastSyncedCalendarId === resolvedCalendarId),
+        ),
+      );
       setOpenAvailabilities(availabilities);
       setSwapRequests(requests.items);
       setRequestsTotal(requests.total);
@@ -398,7 +443,13 @@ export function SwapsCalendarScreen({
     void loadData();
     const id = window.setInterval(() => void loadData(true), 10000);
     return () => window.clearInterval(id);
-  }, [enabled, userId, requestsPage, requestsPageSize]);
+  }, [enabled, userId, requestsPage, requestsPageSize, resolvedCalendarId]);
+
+  useRealtime({
+    userId: enabled ? userId : null,
+    onSwapChange: () => void loadData(true),
+    onLeaveChange: () => void loadData(true),
+  });
 
   const syncOwnCalendar = async (opts?: {
     showDeletedToast?: boolean;
@@ -493,37 +544,7 @@ export function SwapsCalendarScreen({
     setError(null);
     setFeedback(null);
 
-    const verifySupabaseConnection = async (): Promise<boolean> => {
-      const client = getSupabaseClient();
-      if (!client) {
-        const message =
-          "Ligacao ao Supabase indisponivel. Verifique as configuracoes e tente novamente.";
-        setError(message);
-        toast.error(message);
-        return false;
-      }
-
-      const { error: pingError } = await client
-        .from("swap_requests")
-        .select("id", { head: true, count: "exact" })
-        .limit(1);
-
-      if (pingError) {
-        const message = `Falha de ligacao ao Supabase: ${getErrorMessage(pingError)}`;
-        setError(message);
-        toast.error(message);
-        return false;
-      }
-
-      return true;
-    };
-
     try {
-      const isConnected = await verifySupabaseConnection();
-      if (!isConnected) {
-        return;
-      }
-
       await runWithToast(
         () =>
           api.swaps.createSwapRequest({
@@ -883,15 +904,28 @@ export function SwapsCalendarScreen({
           date={calendarDate}
           onViewChange={setCalendarView}
           onNavigate={setCalendarDate}
-          onSelectEvent={(event) => setSelectedEvent(event)}
+          onSelectEvent={(event) => {
+            if (event.kind === "leave") {
+              const leave = event.leaveRequest;
+              toast.info(
+                leave?.hrResponseNotes ||
+                  "Esta ausencia foi sincronizada para o calendario.",
+              );
+              return;
+            }
+
+            setSelectedEvent(event);
+          }}
         />
       </div>
 
       <SwapSidePanel
-        open={Boolean(selectedEvent)}
+        open={Boolean(selectedEvent?.shift)}
         selectedShift={selectedEvent?.shift ?? null}
         isOpenForSwap={
-          selectedEvent ? openOwnShiftIds.has(selectedEvent.shift.id) : false
+          selectedEvent?.shift
+            ? openOwnShiftIds.has(selectedEvent.shift.id)
+            : false
         }
         loading={Boolean(
           selectedEvent?.shift && busyShiftId === selectedEvent.shift.id,

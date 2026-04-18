@@ -99,9 +99,14 @@ const httpLeave: LeaveService = {
     notImplemented("leave.getLeaveRequestsForUserPaginated"),
   createLeaveEmailPreview: () =>
     notImplemented("leave.createLeaveEmailPreview"),
+  createLeaveDecisionLinks: () =>
+    notImplemented("leave.createLeaveDecisionLinks"),
+  processLeaveDecisionAction: () =>
+    notImplemented("leave.processLeaveDecisionAction"),
   confirmLeaveSubmission: () => notImplemented("leave.confirmLeaveSubmission"),
   getAttachmentsByLeaveRequest: () =>
     notImplemented("leave.getAttachmentsByLeaveRequest"),
+  deleteLeaveRequest: () => notImplemented("leave.deleteLeaveRequest"),
   markSentToHR: () => notImplemented("leave.markSentToHR"),
   approveLeaveRequest: () => notImplemented("leave.approveLeaveRequest"),
   rejectLeaveRequest: () => notImplemented("leave.rejectLeaveRequest"),

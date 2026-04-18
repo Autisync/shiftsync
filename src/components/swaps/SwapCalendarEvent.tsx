@@ -13,20 +13,22 @@ export function SwapCalendarEvent({ event }: SwapCalendarEventProps) {
       {event.subtitle ? (
         <p className="truncate text-[10px] opacity-80">{event.subtitle}</p>
       ) : null}
-      <div className="mt-1 flex items-center gap-1">
-        <Clock3 className="h-3 w-3" />
-        <span>
-          {event.start.toLocaleTimeString("pt-PT", {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-          {" - "}
-          {event.end.toLocaleTimeString("pt-PT", {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-        </span>
-      </div>
+      {event.allDay ? null : (
+        <div className="mt-1 flex items-center gap-1">
+          <Clock3 className="h-3 w-3" />
+          <span>
+            {event.start.toLocaleTimeString("pt-PT", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+            {" - "}
+            {event.end.toLocaleTimeString("pt-PT", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </span>
+        </div>
+      )}
       <div className="mt-1 flex items-center gap-1">
         <SwapStatusBadge status={event.status} />
         {event.violation ? (

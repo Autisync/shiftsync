@@ -3,6 +3,9 @@
  *
  * Backend-neutral service interfaces for ShiftSync.
  * Both SupabaseProvider and HttpProvider must implement BackendServices.
+ *
+ * Inline DTOs have been extracted to src/services/contracts/.
+ * This file re-exports them for backward compatibility.
  */
 
 import type {
@@ -16,7 +19,6 @@ import type {
   LeaveRequestStatus,
   ScheduleUpload,
   ScheduleAccessRequest,
-  AccessRequestStatus,
   HRSettings,
   AppNotification,
   LeaveRequestAttachment,
@@ -27,52 +29,143 @@ import type {
   UploadTrustAssessment,
   WorkflowActionToken,
 } from "@/types/domain";
-
-// ── Notification payloads ──────────────────────────────────────────────────
-
-export interface LeaveNotificationPayload {
-  leaveRequestId: string;
-  userId: string;
-  status: LeaveRequestStatus;
-  /** Effective start date (approved if set, otherwise requested). */
-  startDate: string;
-  /** Effective end date (approved if set, otherwise requested). */
-  endDate: string;
-  type: string;
-  notes: string | null;
-  updatedAt: string;
-}
-
-export interface WorkflowActionValidationResult {
-  valid: boolean;
-  reason?: string;
-  tokenId?: string;
-  targetId?: string;
-  workflowType?: "swap_hr_decision";
-}
-
-export interface EmailPreviewPayload {
-  subject: string;
-  to: string[];
-  cc: string[];
-  body: string;
-  attachments: Array<{
-    fileName: string;
-    fileType: string | null;
-    fileSize: number | null;
-  }>;
-}
-
-export interface UploadSelectionSyncInput {
-  userId: string;
-  uploadId: string;
-  acknowledgeRisk: boolean;
-  acknowledgedAt?: string;
-  acknowledgedByUserId?: string;
-  calendarId: string;
-  accessToken: string;
-}
 import type { ShiftData } from "@/types/shift";
+
+import type {
+  CalendarPreferenceDTO,
+  SaveCalendarPreferenceInput,
+} from "@/services/contracts/users.dto";
+import type {
+  CreateShiftInput,
+  UpdateShiftInput,
+} from "@/services/contracts/shifts.dto";
+import type {
+  CreateUploadInput,
+  StartUploadSyncInput,
+  CreateAccessRequestInput,
+  UpdateAccessRequestInput,
+} from "@/services/contracts/uploads.dto";
+import type {
+  CreateSwapRequestInput,
+  AcceptSwapValidationInput,
+  SwapViolationInput,
+  CreateSwapHrLinksInput,
+  SwapHrDecisionLinksResult,
+  ProcessSwapHrDecisionInput,
+  SaveHRSettingsInput,
+} from "@/services/contracts/swaps.dto";
+import type {
+  CreateLeaveRequestInput,
+  CreateLeaveEmailPreviewInput,
+  CreateLeaveDecisionLinksInput,
+  LeaveDecisionLinksResult,
+  ProcessLeaveDecisionInput,
+  ConfirmLeaveSubmissionInput,
+  LeaveApproveInput,
+  LeaveRejectInput,
+  LeaveCalendarSyncInput,
+} from "@/services/contracts/leave.dto";
+import type { EmailPreviewPayload } from "@/services/contracts/common.dto";
+import type {
+  CalendarSyncRunOptions,
+  CalendarSyncResult,
+  CalendarPreviewOptions,
+  CalendarPreviewResult,
+} from "@/services/contracts/calendar.dto";
+import type { LeaveNotificationPayload } from "@/services/contracts/notifications.dto";
+import type {
+  WorkflowActionValidationResult,
+  CreateActionTokenInput,
+  ConsumeActionTokenInput,
+} from "@/services/contracts/workflow.dto";
+import type { CreateReminderInput } from "@/services/contracts/reminders.dto";
+
+// ── Contract DTOs (re-exported for backward compatibility) ─────────────────
+
+export type {
+  FileAttachmentInput,
+  FileAttachmentInfo,
+  EmailPreviewPayload,
+} from "@/services/contracts/common.dto";
+
+export type {
+  CalendarPreferenceDTO,
+  SaveCalendarPreferenceInput,
+  UpdateUserProfileInput,
+} from "@/services/contracts/users.dto";
+
+export type {
+  CreateShiftInput,
+  UpdateShiftInput,
+} from "@/services/contracts/shifts.dto";
+
+export type {
+  CreateSwapRequestInput,
+  SwapViolationInput,
+  AcceptSwapValidationInput,
+  CreateSwapHrLinksInput,
+  SwapHrDecisionLinksResult,
+  ProcessSwapHrDecisionInput,
+  SaveHRSettingsInput,
+} from "@/services/contracts/swaps.dto";
+
+export type {
+  CreateLeaveRequestInput,
+  CreateLeaveEmailPreviewInput,
+  CreateLeaveDecisionLinksInput,
+  LeaveDecisionLinksResult,
+  ProcessLeaveDecisionInput,
+  ConfirmLeaveSubmissionInput,
+  LeaveApproveInput,
+  LeaveRejectInput,
+  LeaveCalendarSyncInput,
+  LeaveSyncResult,
+} from "@/services/contracts/leave.dto";
+
+export type {
+  CreateUploadInput,
+  StartUploadSyncInput,
+  CreateAccessRequestInput,
+  UpdateAccessRequestInput,
+} from "@/services/contracts/uploads.dto";
+
+export type {
+  CalendarSyncRunOptions,
+  CalendarSyncChangeItem,
+  CalendarSyncSummary,
+  CalendarSyncResult,
+  CalendarPreviewOptions,
+  CalendarPreviewResult,
+} from "@/services/contracts/calendar.dto";
+
+export type { LeaveNotificationPayload } from "@/services/contracts/notifications.dto";
+
+export type {
+  WorkflowActionValidationResult,
+  CreateActionTokenInput,
+  ConsumeActionTokenInput,
+} from "@/services/contracts/workflow.dto";
+
+export type { CreateReminderInput } from "@/services/contracts/reminders.dto";
+
+// ── Local-only types ───────────────────────────────────────────────────────
+
+/** @deprecated mailtoUrl is built client-side; no server round-trip needed. */
+export interface LeaveSendToHRInput {
+  mailtoUrl: string;
+}
+
+/**
+ * Backward-compat alias for StartUploadSyncInput.
+ * @deprecated Use StartUploadSyncInput from "@/services/contracts/uploads.dto"
+ */
+export type UploadSelectionSyncInput = StartUploadSyncInput;
+
+/**
+ * Backward-compat alias for CalendarSyncResult.
+ * @deprecated Use CalendarSyncResult from "@/services/contracts/calendar.dto"
+ */
+export type CalendarPreviewSyncResult = CalendarSyncResult;
 
 // ── AuthService ────────────────────────────────────────────────────────────
 
@@ -97,13 +190,12 @@ export interface UserService {
     userId: string,
     data: Partial<Pick<UserProfile, "fullName" | "email" | "employeeCode">>,
   ): Promise<UserProfile>;
-  getDefaultCalendarPreference(userId: string): Promise<{
-    calendarId: string;
-    calendarName: string | null;
-  } | null>;
+  getDefaultCalendarPreference(
+    userId: string,
+  ): Promise<CalendarPreferenceDTO | null>;
   saveDefaultCalendarPreference(
     userId: string,
-    input: { calendarId: string; calendarName?: string | null },
+    input: SaveCalendarPreferenceInput,
   ): Promise<void>;
 }
 
@@ -112,13 +204,8 @@ export interface UserService {
 export interface ShiftService {
   getShiftsForUser(userId: string): Promise<Shift[]>;
   getShiftById(id: string): Promise<Shift | null>;
-  createShift(
-    data: Omit<Shift, "id" | "createdAt" | "updatedAt">,
-  ): Promise<Shift>;
-  updateShift(
-    id: string,
-    data: Partial<Omit<Shift, "id" | "userId" | "createdAt" | "updatedAt">>,
-  ): Promise<Shift>;
+  createShift(data: CreateShiftInput): Promise<Shift>;
+  updateShift(id: string, data: UpdateShiftInput): Promise<Shift>;
   deleteShift(id: string): Promise<void>;
   updateGoogleEventId(shiftId: string, googleEventId: string): Promise<void>;
 }
@@ -126,9 +213,7 @@ export interface ShiftService {
 // ── UploadService ──────────────────────────────────────────────────────────
 
 export interface UploadService {
-  createUpload(
-    data: Omit<ScheduleUpload, "id" | "uploadedAt">,
-  ): Promise<ScheduleUpload>;
+  createUpload(data: CreateUploadInput): Promise<ScheduleUpload>;
   getUploadById(id: string): Promise<ScheduleUpload | null>;
   getUploadsByUser(userId: string): Promise<ScheduleUpload[]>;
   getUploadsByUserPaginated(
@@ -142,23 +227,16 @@ export interface UploadService {
   getUploadTrustAssessmentByUpload(
     uploadId: string,
   ): Promise<UploadTrustAssessment | null>;
-  startUploadSelectionSync(
-    input: UploadSelectionSyncInput,
-  ): Promise<SyncSession>;
+  startUploadSelectionSync(input: StartUploadSyncInput): Promise<SyncSession>;
   getAccessRequestsForUpload(
     uploadId: string,
   ): Promise<ScheduleAccessRequest[]>;
   createAccessRequest(
-    data: Omit<ScheduleAccessRequest, "id" | "createdAt" | "updatedAt">,
+    data: CreateAccessRequestInput,
   ): Promise<ScheduleAccessRequest>;
   updateAccessRequest(
     id: string,
-    data: Partial<
-      Pick<
-        ScheduleAccessRequest,
-        "consentGiven" | "status" | "reviewedAt" | "reviewedByUserId"
-      >
-    >,
+    data: UpdateAccessRequestInput,
   ): Promise<ScheduleAccessRequest>;
 }
 
@@ -170,13 +248,7 @@ export interface SwapService {
   getOpenAvailabilities(): Promise<
     Array<{ shift: Shift; availability: SwapAvailability }>
   >;
-  createSwapRequest(data: {
-    requesterUserId: string;
-    requesterShiftId: string;
-    targetUserId: string;
-    targetShiftId?: string;
-    message?: string;
-  }): Promise<SwapRequest>;
+  createSwapRequest(data: CreateSwapRequestInput): Promise<SwapRequest>;
   getSwapRequestsForUser(userId: string): Promise<SwapRequest[]>;
   getSwapRequestsForUserPaginated(
     userId: string,
@@ -186,98 +258,34 @@ export interface SwapService {
     id: string,
     status: SwapRequestStatus,
     actorUserId?: string,
-    violations?: { code: string; reason: string },
+    violations?: SwapViolationInput,
   ): Promise<SwapRequest>;
   acceptSwapRequest(
     requestId: string,
     targetUserId: string,
-    validationResult: {
-      valid: boolean;
-      violations: Array<{ code: string; message: string }>;
-    },
+    validationResult: AcceptSwapValidationInput,
   ): Promise<SwapRequest>;
   markHREmailSent(
     requestId: string,
     actorUserId?: string,
   ): Promise<SwapRequest>;
   markHRApproved(requestId: string, actorUserId?: string): Promise<SwapRequest>;
-  createHrDecisionLinks(input: {
-    requestId: string;
-    actorUserId?: string;
-    baseUrl?: string;
-    expiresInHours?: number;
-  }): Promise<{
-    approveUrl: string;
-    declineUrl: string;
-    expiresAt: string;
-  }>;
-  processHrDecisionAction(input: {
-    token: string;
-    action: "approve" | "decline";
-    actorEmail?: string;
-  }): Promise<SwapRequest>;
+  createHrDecisionLinks(
+    input: CreateSwapHrLinksInput,
+  ): Promise<SwapHrDecisionLinksResult>;
+  processHrDecisionAction(
+    input: ProcessSwapHrDecisionInput,
+  ): Promise<SwapRequest>;
   applySwap(requestId: string): Promise<SwapRequest>;
   getHRSettings(userId: string): Promise<HRSettings | null>;
-  saveHRSettings(input: {
-    userId: string;
-    hrEmail: string;
-    ccEmails: string[];
-    selectedCalendarId?: string | null;
-    selectedCalendarName?: string | null;
-    lastSyncedCalendarId?: string | null;
-  }): Promise<HRSettings>;
+  saveHRSettings(input: SaveHRSettingsInput): Promise<HRSettings>;
 }
 
 // ── LeaveService ───────────────────────────────────────────────────────────
 
-export interface LeaveApproveInput {
-  /** HR-confirmed start date. Defaults to requested dates if omitted. */
-  approvedStartDate?: string;
-  /** HR-confirmed end date. Defaults to requested dates if omitted. */
-  approvedEndDate?: string;
-  approvedNotes?: string;
-  hrResponseNotes?: string;
-}
-
-export interface LeaveRejectInput {
-  hrResponseNotes?: string;
-}
-
-export interface LeaveSendToHRInput {
-  /** pre-computed mailto URL string returned to the caller */
-  mailtoUrl: string;
-}
-
-export interface LeaveSyncResult {
-  created: number;
-  updated: number;
-  googleEventId: string;
-  leaveUid: string;
-  calendarId: string;
-}
-
 export interface LeaveService {
   /** Creates a leave request as a draft (status = draft). */
-  createLeaveRequest(
-    data: Omit<
-      LeaveRequest,
-      | "id"
-      | "status"
-      | "createdAt"
-      | "updatedAt"
-      | "sentToHrAt"
-      | "decisionDueAt"
-      | "approvedStartDate"
-      | "approvedEndDate"
-      | "approvedNotes"
-      | "hrResponseNotes"
-      | "softDeclinedAt"
-      | "calendarAppliedAt"
-      | "googleEventId"
-      | "leaveUid"
-      | "lastSyncedCalendarId"
-    >,
-  ): Promise<LeaveRequest>;
+  createLeaveRequest(data: CreateLeaveRequestInput): Promise<LeaveRequest>;
 
   getLeaveRequestsForUser(userId: string): Promise<LeaveRequest[]>;
   getLeaveRequestsForUserPaginated(
@@ -285,34 +293,27 @@ export interface LeaveService {
     query: PaginatedQuery,
   ): Promise<PaginatedResult<LeaveRequest>>;
 
-  createLeaveEmailPreview(input: {
-    leaveRequestId: string;
-    hrEmail: string;
-    ccEmails?: string[];
-    employeeName?: string;
-    employeeCode?: string;
-    attachments?: Array<{
-      fileName: string;
-      fileType?: string | null;
-      fileSize?: number | null;
-      storagePath?: string | null;
-    }>;
-  }): Promise<EmailPreviewPayload>;
+  createLeaveEmailPreview(
+    input: CreateLeaveEmailPreviewInput,
+  ): Promise<EmailPreviewPayload>;
 
-  confirmLeaveSubmission(input: {
-    leaveRequestId: string;
-    emailPreview: EmailPreviewPayload;
-    attachments?: Array<{
-      fileName: string;
-      fileType?: string | null;
-      fileSize?: number | null;
-      storagePath?: string | null;
-    }>;
-  }): Promise<LeaveRequest>;
+  createLeaveDecisionLinks(
+    input: CreateLeaveDecisionLinksInput,
+  ): Promise<LeaveDecisionLinksResult>;
+
+  processLeaveDecisionAction(
+    input: ProcessLeaveDecisionInput,
+  ): Promise<LeaveRequest>;
+
+  confirmLeaveSubmission(
+    input: ConfirmLeaveSubmissionInput,
+  ): Promise<LeaveRequest>;
 
   getAttachmentsByLeaveRequest(
     leaveRequestId: string,
   ): Promise<LeaveRequestAttachment[]>;
+
+  deleteLeaveRequest(id: string): Promise<void>;
 
   /** Transitions status → pending and records sent_to_hr_at / decision_due_at. */
   markSentToHR(id: string): Promise<LeaveRequest>;
@@ -345,11 +346,7 @@ export interface LeaveService {
    */
   recordCalendarSync(
     id: string,
-    syncData: {
-      googleEventId: string;
-      leaveUid: string;
-      calendarId: string;
-    },
+    syncData: LeaveCalendarSyncInput,
   ): Promise<LeaveRequest>;
 
   /** @deprecated — use approveLeaveRequest / rejectLeaveRequest instead. */
@@ -361,55 +358,6 @@ export interface LeaveService {
 
 // ── CalendarSyncService ────────────────────────────────────────────────────
 
-export interface CalendarSyncRunOptions {
-  userId: string;
-  accessToken: string;
-  calendarId: string;
-  dateRange?: {
-    start: string;
-    end: string;
-  };
-  fullResync?: boolean;
-  removeStaleEvents?: boolean;
-  preferPlatformChanges?: boolean;
-}
-
-export interface CalendarPreviewSyncResult {
-  summary: {
-    created: number;
-    updated: number;
-    deleted: number;
-    noop: number;
-    failed: number;
-    updatedFromGoogle: number;
-  };
-  changes?: Array<{
-    type: "create" | "update" | "delete" | "noop";
-    reason: string;
-    syncShiftKey: string | null;
-    date: string | null;
-    start: string | null;
-    end: string | null;
-    title: string | null;
-    location: string | null;
-  }>;
-  syncedShifts: ShiftData[];
-  errors: Array<{ shiftId: string | null; message: string }>;
-}
-
-export interface CalendarPreviewOptions {
-  userId: string;
-  accessToken: string;
-  calendarId: string;
-  dateRange?: {
-    start: string;
-    end: string;
-  };
-  fullResync?: boolean;
-  removeStaleEvents?: boolean;
-  preferPlatformChanges?: boolean;
-}
-
 export interface CalendarSyncService {
   syncShifts(
     shifts: Shift[],
@@ -419,13 +367,13 @@ export interface CalendarSyncService {
   runSync(
     shifts: ShiftData[],
     options: CalendarSyncRunOptions,
-  ): Promise<CalendarPreviewSyncResult>;
+  ): Promise<CalendarSyncResult>;
   previewSync(
     shifts: ShiftData[],
     options: CalendarPreviewOptions,
   ): Promise<{
-    summary: CalendarPreviewSyncResult["summary"];
-    changes: NonNullable<CalendarPreviewSyncResult["changes"]>;
+    summary: CalendarPreviewResult["summary"];
+    changes: CalendarPreviewResult["changes"];
   }>;
 }
 
@@ -445,27 +393,22 @@ export interface NotificationService {
   getUnreadCount(userId: string): Promise<number>;
 }
 
+// ── WorkflowService ────────────────────────────────────────────────────────
+
 export interface WorkflowService {
-  createActionToken(input: {
-    workflowType: "swap_hr_decision";
-    targetId: string;
-    expiresInMinutes: number;
-  }): Promise<WorkflowActionToken>;
+  createActionToken(
+    input: CreateActionTokenInput,
+  ): Promise<WorkflowActionToken>;
   validateActionToken(token: string): Promise<WorkflowActionValidationResult>;
-  consumeActionToken(input: {
-    token: string;
-    action: "approve" | "decline";
-    actorEmail?: string;
-  }): Promise<WorkflowActionValidationResult>;
+  consumeActionToken(
+    input: ConsumeActionTokenInput,
+  ): Promise<WorkflowActionValidationResult>;
 }
 
+// ── ReminderService ────────────────────────────────────────────────────────
+
 export interface ReminderService {
-  createReminder(input: {
-    userId: string;
-    type: "days_off_selection";
-    triggerAt: string;
-    payload?: Record<string, unknown>;
-  }): Promise<ReminderJob>;
+  createReminder(input: CreateReminderInput): Promise<ReminderJob>;
   getRemindersByUser(
     userId: string,
     query: PaginatedQuery,

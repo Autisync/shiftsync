@@ -63,6 +63,11 @@ function eventStyleGetter(event: SwapCalendarEventItem) {
       color: "#9f1239",
       borderColor: "#fda4af",
     },
+    leave: {
+      backgroundColor: "#ecfeff",
+      color: "#155e75",
+      borderColor: "#67e8f9",
+    },
   };
 
   return {
@@ -107,6 +112,7 @@ export function SwapCalendar({
         events={events}
         startAccessor="start"
         endAccessor="end"
+        allDayAccessor="allDay"
         view={view}
         date={date}
         views={["month", "week", "day"]}

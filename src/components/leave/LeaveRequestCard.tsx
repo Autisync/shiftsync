@@ -45,6 +45,7 @@ interface LeaveRequestCardProps {
     start: string,
     end: string,
   ) => void;
+  onDelete?: (request: LeaveRequest) => void;
   busy?: boolean;
   calendarSyncing?: boolean;
 }
@@ -56,6 +57,7 @@ export function LeaveRequestCard({
   onReject,
   onCalendarSync,
   onUpdateApprovedDates,
+  onDelete,
   busy = false,
   calendarSyncing = false,
 }: LeaveRequestCardProps) {
@@ -68,6 +70,12 @@ export function LeaveRequestCard({
     canReview && canLeaveStatusTransition(request.status, "rejected");
   const isApproved = request.status === "approved";
   const isVacation = isVacationType(request.type);
+  const canDelete =
+    Boolean(onDelete) &&
+    (request.status === "draft" ||
+      request.status === "pending" ||
+      request.status === "rejected" ||
+      request.status === "soft_declined");
 
   // ── Inline approval state ────────────────────────────────────────────────
   const [showApproveForm, setShowApproveForm] = useState(false);
@@ -271,6 +279,7 @@ export function LeaveRequestCard({
       {!showApproveForm &&
         (canApprove ||
           canReject ||
+          canDelete ||
           (isApproved && onCalendarSync) ||
           (isApproved && isVacation && onUpdateApprovedDates)) && (
           <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-2">
@@ -292,6 +301,18 @@ export function LeaveRequestCard({
                 onClick={() => handleReject()}
               >
                 Rejeitar
+              </Button>
+            )}
+
+            {canDelete && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                className="text-rose-700 border-rose-200 hover:bg-rose-50"
+                onClick={() => onDelete?.(request)}
+              >
+                Eliminar
               </Button>
             )}
 

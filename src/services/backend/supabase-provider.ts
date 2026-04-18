@@ -176,6 +176,26 @@ async function extractInvokeErrorMessage(error: unknown): Promise<string> {
   }
 }
 
+async function getEdgeInvokeAuthHeaders(
+  supabase: NonNullable<ReturnType<typeof getSupabaseClient>>,
+): Promise<Record<string, string>> {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) {
+    throw new Error(getErrorMessage(error));
+  }
+
+  const token = data.session?.access_token;
+  if (!token) {
+    throw new Error(
+      "Sessão inválida para gerar links do RH. Faça login novamente.",
+    );
+  }
+
+  return {
+    Authorization: `Bearer ${token}`,
+  };
+}
+
 async function createInAppNotification(input: {
   userId: string;
   type: AppNotification["type"];
@@ -2092,6 +2112,7 @@ const supabaseLeave: LeaveService = {
   async createLeaveEmailPreview(input): Promise<EmailPreviewPayload> {
     const supabase = getSupabaseClient();
     if (!supabase) throw new Error("Supabase client unavailable");
+    const authHeaders = await getEdgeInvokeAuthHeaders(supabase);
 
     const { data, error } = await supabase
       .from("leave_requests")
@@ -2101,6 +2122,42 @@ const supabaseLeave: LeaveService = {
 
     if (error) throw error;
     const leave = toLeaveRequest(data);
+
+    const safeBaseUrl = `${window.location.origin}${import.meta.env.BASE_URL ?? "/"}`;
+    const { data: linksData, error: linksError } =
+      await supabase.functions.invoke("leave-hr-actions", {
+        headers: authHeaders,
+        body: {
+          operation: "create",
+          leave_request_id: leave.id,
+          base_url: safeBaseUrl,
+          expires_in_hours: 72,
+        },
+      });
+
+    if (linksError) {
+      const msg = await extractInvokeErrorMessage(linksError);
+      console.error("[leave-hr-actions create] error:", msg, linksError);
+      throw new Error(msg);
+    }
+
+    console.debug("[leave-hr-actions create] response:", linksData);
+
+    const decisionLinks = linksData as {
+      approve_url?: string;
+      decline_url?: string;
+      adjust_url?: string;
+      expires_at?: string;
+    } | null;
+
+    if (
+      !decisionLinks?.approve_url ||
+      !decisionLinks?.decline_url ||
+      !decisionLinks?.adjust_url ||
+      !decisionLinks?.expires_at
+    ) {
+      throw new Error("Falha ao gerar links seguros de decisão para ausência.");
+    }
 
     const subject = `[ShiftSync] Pedido de ${leave.type} (${leave.startDate} a ${leave.endDate})`;
     const lines = [
@@ -2112,6 +2169,12 @@ const supabaseLeave: LeaveService = {
       `Início: ${leave.startDate}`,
       `Fim: ${leave.endDate}`,
       `Observações: ${leave.notes ?? "-"}`,
+      "",
+      "Ações rápidas RH (link seguro de uso único):",
+      `Aprovar: ${decisionLinks.approve_url}`,
+      `Recusar: ${decisionLinks.decline_url}`,
+      `Solicitar ajustes: ${decisionLinks.adjust_url}`,
+      `Validade: ${decisionLinks.expires_at}`,
       "",
       "Obrigado.",
     ];
@@ -2127,6 +2190,98 @@ const supabaseLeave: LeaveService = {
         fileSize: item.fileSize ?? null,
       })),
     };
+  },
+
+  async createLeaveDecisionLinks(input): Promise<{
+    approveUrl: string;
+    declineUrl: string;
+    adjustUrl: string;
+    expiresAt: string;
+  }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+    const authHeaders = await getEdgeInvokeAuthHeaders(supabase);
+
+    const safeBaseUrl =
+      input.baseUrl ??
+      `${window.location.origin}${import.meta.env.BASE_URL ?? "/"}`;
+
+    const { data, error } = await supabase.functions.invoke(
+      "leave-hr-actions",
+      {
+        headers: authHeaders,
+        body: {
+          operation: "create",
+          leave_request_id: input.leaveRequestId,
+          base_url: safeBaseUrl,
+          expires_in_hours: input.expiresInHours ?? 72,
+        },
+      },
+    );
+
+    if (error) {
+      throw new Error(await extractInvokeErrorMessage(error));
+    }
+
+    const response = data as {
+      approve_url?: string;
+      decline_url?: string;
+      adjust_url?: string;
+      expires_at?: string;
+    } | null;
+
+    if (
+      !response?.approve_url ||
+      !response?.decline_url ||
+      !response?.adjust_url ||
+      !response?.expires_at
+    ) {
+      throw new Error("Falha ao gerar links seguros de decisão para ausência.");
+    }
+
+    return {
+      approveUrl: response.approve_url,
+      declineUrl: response.decline_url,
+      adjustUrl: response.adjust_url,
+      expiresAt: response.expires_at,
+    };
+  },
+
+  async processLeaveDecisionAction(input): Promise<LeaveRequest> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data, error } = await supabase.functions.invoke(
+      "leave-hr-actions",
+      {
+        body: {
+          operation: "consume",
+          token: input.token,
+          action: input.action,
+          actor_email: input.actorEmail ?? null,
+        },
+      },
+    );
+
+    if (error) {
+      throw new Error(await extractInvokeErrorMessage(error));
+    }
+
+    const response = data as { leave_request?: { id?: string } } | null;
+    const leaveRequestId = response?.leave_request?.id;
+    if (!leaveRequestId) {
+      throw new Error("Resposta inválida ao processar decisão do RH.");
+    }
+
+    const { data: updatedRow, error: updatedError } = await supabase
+      .from("leave_requests")
+      .select("*")
+      .eq("id", leaveRequestId)
+      .single();
+
+    return toLeaveRequest(
+      assertNoError({ data: updatedRow, error: updatedError }),
+    );
   },
 
   async confirmLeaveSubmission(input): Promise<LeaveRequest> {
@@ -2216,6 +2371,22 @@ const supabaseLeave: LeaveService = {
         row.uploaded_at ?? row.created_at ?? new Date().toISOString(),
       ),
     }));
+  },
+
+  async deleteLeaveRequest(id: string): Promise<void> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    await (supabase as any)
+      .from("leave_request_attachments")
+      .delete()
+      .eq("leave_request_id", id);
+
+    const { error } = await supabase
+      .from("leave_requests")
+      .delete()
+      .eq("id", id);
+    if (error) throw error;
   },
 
   async markSentToHR(id: string): Promise<LeaveRequest> {

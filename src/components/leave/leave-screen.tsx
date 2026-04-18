@@ -30,7 +30,18 @@ import {
   LoadingListSkeleton,
   LoadingState,
 } from "@/components/ui/loading-state";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { runWithToast } from "@/lib/async-toast";
+import { useRealtime } from "@/features/notifications/use-realtime";
 import {
   feedbackMessages,
   invalidTransitionMessage,
@@ -73,6 +84,7 @@ export function LeaveScreen({
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<LeaveRequest | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -98,6 +110,32 @@ export function LeaveScreen({
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void loadData();
+    }, 15000);
+
+    const onVisibilityOrFocus = () => {
+      if (!document.hidden) {
+        void loadData();
+      }
+    };
+
+    window.addEventListener("focus", onVisibilityOrFocus);
+    document.addEventListener("visibilitychange", onVisibilityOrFocus);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", onVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", onVisibilityOrFocus);
+    };
+  }, [loadData]);
+
+  useRealtime({
+    userId,
+    onLeaveChange: loadData,
+  });
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
@@ -255,6 +293,28 @@ export function LeaveScreen({
     }
   }
 
+  async function handleDelete(request: LeaveRequest) {
+    setBusyId(request.id);
+    try {
+      await runWithToast(() => backend.leave.deleteLeaveRequest(request.id), {
+        loading: "A eliminar pedido...",
+        success: "Pedido eliminado com sucesso.",
+        error: (error) => `Erro ao eliminar pedido: ${getErrorMessage(error)}`,
+      });
+
+      setRequests((prev) => prev.filter((r) => r.id !== request.id));
+      setRequestsTotal((prev) => Math.max(0, prev - 1));
+    } catch {
+      // handled by toast
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function requestDeleteConfirmation(request: LeaveRequest) {
+    setDeleteTarget(request);
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -319,6 +379,7 @@ export function LeaveScreen({
             onPageChange={setRequestsPage}
             onApprove={(r, input) => void handleApprove(r, input)}
             onReject={(r, input) => void handleReject(r, input)}
+            onDelete={requestDeleteConfirmation}
             onCalendarSync={(r) => void handleCalendarSync(r)}
             onUpdateApprovedDates={(r, s, e) =>
               void handleUpdateApprovedDates(r, s, e)
@@ -328,6 +389,43 @@ export function LeaveScreen({
           />
         )}
       </div>
+
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminar pedido de ausência</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem a certeza que pretende eliminar este pedido de ausência?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={deleteTarget ? busyId === deleteTarget.id : false}
+            >
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteTarget ? busyId === deleteTarget.id : false}
+              onClick={(event) => {
+                event.preventDefault();
+                if (!deleteTarget) return;
+                const target = deleteTarget;
+                setDeleteTarget(null);
+                void handleDelete(target);
+              }}
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Refresh */}
       <div className="flex justify-end">

@@ -59,6 +59,7 @@ interface LeaveRequestListProps {
   canReview?: boolean;
   onApprove?: (request: LeaveRequest, input: LeaveApproveInput) => void;
   onReject?: (request: LeaveRequest, input: LeaveRejectInput) => void;
+  onDelete?: (request: LeaveRequest) => void;
   onCalendarSync?: (request: LeaveRequest) => void;
   onUpdateApprovedDates?: (
     request: LeaveRequest,
@@ -80,6 +81,7 @@ export function LeaveRequestList({
   canReview = false,
   onApprove,
   onReject,
+  onDelete,
   onCalendarSync,
   onUpdateApprovedDates,
   page,
@@ -192,6 +194,7 @@ export function LeaveRequestList({
             canReview={canReview}
             onApprove={onApprove}
             onReject={onReject}
+            onDelete={onDelete}
             onCalendarSync={onCalendarSync}
             onUpdateApprovedDates={onUpdateApprovedDates}
             busy={busyId === req.id}
