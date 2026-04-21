@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.47.0";
+import { buildHrCcList, isValidEmail } from "../_shared/hr-email-policy.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY =
@@ -6,13 +7,6 @@ const SUPABASE_SERVICE_ROLE_KEY =
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
 const EMAIL_FROM =
   Deno.env.get("EMAIL_FROM") ?? "ShiftSync <no-reply@shiftsync.app>";
-const SMTP_HOST = Deno.env.get("SMTP_HOST") ?? "";
-const SMTP_PORT = Number.parseInt(Deno.env.get("SMTP_PORT") ?? "587", 10);
-const SMTP_USERNAME = Deno.env.get("SMTP_USERNAME") ?? "";
-const SMTP_PASSWORD = Deno.env.get("SMTP_PASSWORD") ?? "";
-const SMTP_SECURE =
-  (Deno.env.get("SMTP_SECURE") ?? "false").toLowerCase() === "true";
-const SMTP_FROM = Deno.env.get("SMTP_FROM") ?? EMAIL_FROM;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,6 +32,22 @@ interface ProviderSendPayload {
   html: string;
 }
 
+interface SwapEmailContext {
+  requestId: string;
+  createdAt: string | null;
+  expiresAt: string;
+  requesterName: string;
+  requesterCode: string;
+  targetName: string;
+  targetCode: string;
+  requesterShiftLabel: string;
+  targetShiftLabel: string;
+  violationLabel: string | null;
+  violationReason: string | null;
+  approveUrl: string;
+  declineUrl: string;
+}
+
 function json(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -48,14 +58,183 @@ function json(status: number, body: Record<string, unknown>): Response {
   });
 }
 
-function hasSmtpConfig(): boolean {
-  return (
-    Boolean(SMTP_HOST) &&
-    Number.isFinite(SMTP_PORT) &&
-    SMTP_PORT > 0 &&
-    Boolean(SMTP_USERNAME) &&
-    Boolean(SMTP_PASSWORD)
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function formatDateTimePt(value: string | null | undefined): string {
+  if (!value) {
+    return "N/D";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "N/D";
+  }
+
+  return date.toLocaleString("pt-PT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatShiftLabel(shift: Record<string, unknown> | null): string {
+  if (!shift) {
+    return "Turno indisponível";
+  }
+
+  const date =
+    typeof shift.date === "string"
+      ? new Date(`${shift.date}T00:00:00`)
+      : new Date(NaN);
+  const startsAt =
+    typeof shift.starts_at === "string" ? new Date(shift.starts_at) : null;
+  const endsAt =
+    typeof shift.ends_at === "string" ? new Date(shift.ends_at) : null;
+
+  if (
+    !startsAt ||
+    !endsAt ||
+    Number.isNaN(startsAt.getTime()) ||
+    Number.isNaN(endsAt.getTime())
+  ) {
+    return "Turno indisponível";
+  }
+
+  const datePart = Number.isNaN(date.getTime())
+    ? startsAt.toLocaleDateString("pt-PT")
+    : date.toLocaleDateString("pt-PT");
+  const startPart = startsAt.toLocaleTimeString("pt-PT", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const endPart = endsAt.toLocaleTimeString("pt-PT", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  return `${datePart}, ${startPart}-${endPart}`;
+}
+
+function buildSwapEmailText(context: SwapEmailContext): string {
+  const lines = [
+    "Olá RH,",
+    "",
+    "Existe um pedido de troca de turno pendente de decisão.",
+    "",
+    "Resumo:",
+    `- Pedido: ${context.requestId}`,
+    `- Criado em: ${formatDateTimePt(context.createdAt)}`,
+    `- Validade da decisão: ${formatDateTimePt(context.expiresAt)}`,
+    "",
+    "Participantes:",
+    `- Requerente: ${context.requesterName} (${context.requesterCode})`,
+    `- Colega: ${context.targetName} (${context.targetCode})`,
+    "",
+    "Mudança de turno (por quem e para quê):",
+    `- Pedido por: ${context.requesterName} (${context.requesterCode})`,
+    `- Alteração pretendida: trocar turnos com ${context.targetName} (${context.targetCode}) para ajustar o planeamento.`,
+    "",
+    "Turnos propostos:",
+    `- Turno do requerente: ${context.requesterShiftLabel}`,
+    `- Turno do colega: ${context.targetShiftLabel}`,
+  ];
+
+  if (context.violationLabel) {
+    lines.push(
+      "",
+      "Validação de regras:",
+      `- Atenção: ${context.violationLabel}`,
+    );
+    if (context.violationReason) {
+      lines.push(`- Detalhe: ${context.violationReason}`);
+    }
+  }
+
+  lines.push(
+    "",
+    "Ações:",
+    `- Aprovar: ${context.approveUrl}`,
+    `- Recusar: ${context.declineUrl}`,
+    "",
+    "Este link é de uso único.",
+    "",
+    "ShiftSync",
   );
+
+  return lines.join("\n");
+}
+
+function buildSwapEmailHtml(context: SwapEmailContext): string {
+  const violationHtml = context.violationLabel
+    ? `<div style="margin-top:16px;padding:12px 14px;border-radius:12px;border:1px solid #fecaca;background:#fef2f2;color:#7f1d1d;">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">Validação de Regras</div>
+        <div style="font-size:14px;font-weight:600;">${escapeHtml(context.violationLabel)}</div>
+        ${
+          context.violationReason
+            ? `<div style="font-size:13px;margin-top:4px;line-height:1.45;">${escapeHtml(context.violationReason)}</div>`
+            : ""
+        }
+      </div>`
+    : "";
+
+  return `
+    <div style="margin:0;padding:24px;background:#f1f5f9;font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;color:#0f172a;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:700px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
+        <tr>
+          <td style="padding:20px 24px;background:linear-gradient(120deg,#0f172a,#1e293b);color:#f8fafc;">
+            <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;opacity:.85;">ShiftSync RH</div>
+            <h2 style="margin:8px 0 0;font-size:22px;line-height:1.2;">Decisão necessária para troca de turno</h2>
+            <p style="margin:10px 0 0;font-size:14px;opacity:.9;">Avalie o pedido e escolha uma ação rápida abaixo.</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:20px 24px;">
+            <div style="display:inline-block;padding:6px 10px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">Ação pendente</div>
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:16px;border-collapse:separate;border-spacing:0 8px;">
+              <tr><td style="font-size:13px;color:#475569;width:170px;">Pedido</td><td style="font-size:14px;font-weight:600;">${escapeHtml(context.requestId)}</td></tr>
+              <tr><td style="font-size:13px;color:#475569;">Criado em</td><td style="font-size:14px;font-weight:600;">${escapeHtml(formatDateTimePt(context.createdAt))}</td></tr>
+              <tr><td style="font-size:13px;color:#475569;">Expira em</td><td style="font-size:14px;font-weight:700;color:#7c2d12;">${escapeHtml(formatDateTimePt(context.expiresAt))}</td></tr>
+            </table>
+
+            <div style="margin-top:18px;padding:14px;border:1px solid #e2e8f0;border-radius:12px;background:#f8fafc;">
+              <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#475569;">Participantes</div>
+              <div style="margin-top:8px;font-size:14px;"><strong>Requerente:</strong> ${escapeHtml(context.requesterName)} (${escapeHtml(context.requesterCode)})</div>
+              <div style="margin-top:4px;font-size:14px;"><strong>Colega:</strong> ${escapeHtml(context.targetName)} (${escapeHtml(context.targetCode)})</div>
+            </div>
+
+            <div style="margin-top:14px;padding:14px;border:1px solid #e2e8f0;border-radius:12px;background:#f8fafc;">
+              <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#475569;">Mudança de turno (por quem e para quê)</div>
+              <div style="margin-top:8px;font-size:14px;">Pedido por <strong>${escapeHtml(context.requesterName)}</strong> para trocar turnos com <strong>${escapeHtml(context.targetName)}</strong>.</div>
+            </div>
+
+            <div style="margin-top:14px;padding:14px;border:1px solid #e2e8f0;border-radius:12px;background:#f8fafc;">
+              <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#475569;">Turnos em troca</div>
+              <div style="margin-top:8px;font-size:14px;"><strong>Requerente:</strong> ${escapeHtml(context.requesterShiftLabel)}</div>
+              <div style="margin-top:4px;font-size:14px;"><strong>Colega:</strong> ${escapeHtml(context.targetShiftLabel)}</div>
+            </div>
+
+            ${violationHtml}
+
+            <div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap;">
+              <a href="${escapeHtml(context.approveUrl)}" style="display:inline-block;padding:12px 16px;border-radius:10px;background:#16a34a;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;">Aprovar troca</a>
+              <a href="${escapeHtml(context.declineUrl)}" style="display:inline-block;padding:12px 16px;border-radius:10px;background:#dc2626;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;">Recusar troca</a>
+            </div>
+
+            <p style="margin:16px 0 0;font-size:12px;color:#64748b;">Os links são de uso único e deixam de funcionar após a validade.</p>
+          </td>
+        </tr>
+      </table>
+    </div>
+  `;
 }
 
 async function sendViaResend(
@@ -112,13 +291,6 @@ function isDomainNotVerifiedError(errorMessage: string): boolean {
   );
 }
 
-function isValidEmail(email: string | null | undefined): email is string {
-  if (typeof email !== "string") return false;
-  const normalized = email.trim();
-  if (!normalized) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
-}
-
 async function resolveActorEmail(
   supabase: ReturnType<typeof createClient>,
   actorUserId: string | null | undefined,
@@ -134,42 +306,6 @@ async function resolveActorEmail(
 
   const actorEmail = data?.user?.email;
   return isValidEmail(actorEmail) ? actorEmail.trim() : null;
-}
-
-async function sendViaSmtp(
-  payload: ProviderSendPayload,
-): Promise<Record<string, unknown>> {
-  if (!hasSmtpConfig()) {
-    throw new Error(
-      "SMTP fallback is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD",
-    );
-  }
-
-  const nodemailer = await import("npm:nodemailer@6.10.0");
-
-  const transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SMTP_SECURE,
-    auth: {
-      user: SMTP_USERNAME,
-      pass: SMTP_PASSWORD,
-    },
-  });
-
-  const info = await transporter.sendMail({
-    from: SMTP_FROM,
-    to: payload.hr_email,
-    cc: payload.cc_emails.length > 0 ? payload.cc_emails : undefined,
-    subject: payload.subject,
-    text: payload.text,
-    html: payload.html,
-  });
-
-  return {
-    provider: "smtp",
-    messageId: typeof info?.messageId === "string" ? info.messageId : null,
-  };
 }
 
 Deno.serve(async (req: Request) => {
@@ -198,6 +334,7 @@ Deno.serve(async (req: Request) => {
 
   if (
     !payload.request_id ||
+    !payload.actor_user_id ||
     !payload.hr_email ||
     !payload.approve_url ||
     !payload.decline_url ||
@@ -205,13 +342,29 @@ Deno.serve(async (req: Request) => {
   ) {
     return json(400, {
       error:
-        "Missing required fields: request_id, hr_email, approve_url, decline_url, expires_at",
+        "Missing required fields: request_id, actor_user_id, hr_email, approve_url, decline_url, expires_at",
     });
   }
 
+  const actorEmail = await resolveActorEmail(supabase, payload.actor_user_id);
+  if (!actorEmail) {
+    return json(400, {
+      error: "Unable to resolve the sender user email for mandatory CC.",
+    });
+  }
+
+  const ccEmails = buildHrCcList({
+    configuredCcEmails: Array.isArray(payload.cc_emails)
+      ? payload.cc_emails
+      : [],
+    actorEmail,
+  });
+
   const { data: requestRow, error: requestError } = await supabase
     .from("swap_requests")
-    .select("id, requester_user_id, target_user_id")
+    .select(
+      "id, requester_user_id, target_user_id, requester_shift_id, target_shift_id, created_at, rule_violation, violation_reason",
+    )
     .eq("id", payload.request_id)
     .single();
 
@@ -219,35 +372,100 @@ Deno.serve(async (req: Request) => {
     return json(404, { error: "Swap request not found" });
   }
 
-  const subject = "Pedido de decisão RH para troca de turno";
+  const [
+    requesterUserResult,
+    targetUserResult,
+    requesterShiftResult,
+    targetShiftResult,
+  ] = await Promise.allSettled([
+    supabase
+      .from("users")
+      .select("id, full_name, email, employee_code")
+      .eq("id", requestRow.requester_user_id)
+      .single(),
+    supabase
+      .from("users")
+      .select("id, full_name, email, employee_code")
+      .eq("id", requestRow.target_user_id)
+      .single(),
+    supabase
+      .from("shifts")
+      .select("id, date, starts_at, ends_at")
+      .eq("id", requestRow.requester_shift_id)
+      .maybeSingle(),
+    requestRow.target_shift_id
+      ? supabase
+          .from("shifts")
+          .select("id, date, starts_at, ends_at")
+          .eq("id", requestRow.target_shift_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
 
-  const text = [
-    "Olá RH,",
-    "",
-    "Existe um pedido de troca de turno pendente de decisão.",
-    "",
-    `ID do pedido: ${payload.request_id}`,
-    `Expira em: ${new Date(payload.expires_at).toLocaleString("pt-PT")}`,
-    "",
-    `Aprovar: ${payload.approve_url}`,
-    `Rejeitar: ${payload.decline_url}`,
-  ].join("\n");
+  const requesterUser =
+    requesterUserResult.status === "fulfilled" &&
+    !requesterUserResult.value.error
+      ? requesterUserResult.value.data
+      : null;
+  const targetUser =
+    targetUserResult.status === "fulfilled" && !targetUserResult.value.error
+      ? targetUserResult.value.data
+      : null;
+  const requesterShift =
+    requesterShiftResult.status === "fulfilled" &&
+    !requesterShiftResult.value.error
+      ? requesterShiftResult.value.data
+      : null;
+  const targetShift =
+    targetShiftResult.status === "fulfilled" && !targetShiftResult.value.error
+      ? targetShiftResult.value.data
+      : null;
 
-  const html = `
-    <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #0f172a;">
-      <h2 style="margin-bottom: 8px;">Pedido de decisão RH</h2>
-      <p style="margin: 0 0 8px;">Existe um pedido de troca de turno pendente de decisão.</p>
-      <p style="margin: 0 0 16px;"><strong>ID do pedido:</strong> ${payload.request_id}<br/><strong>Expira em:</strong> ${new Date(payload.expires_at).toLocaleString("pt-PT")}</p>
-      <div style="display: flex; gap: 8px; margin-top: 12px;">
-        <a href="${payload.approve_url}" style="background:#16a34a;color:white;padding:10px 14px;border-radius:8px;text-decoration:none;font-weight:600;">Aprovar</a>
-        <a href="${payload.decline_url}" style="background:#dc2626;color:white;padding:10px 14px;border-radius:8px;text-decoration:none;font-weight:600;">Rejeitar</a>
-      </div>
-    </div>
-  `;
+  const requesterName =
+    requesterUser?.full_name ??
+    requesterUser?.email ??
+    String(requestRow.requester_user_id).slice(0, 8);
+  const targetName =
+    targetUser?.full_name ??
+    targetUser?.email ??
+    String(requestRow.target_user_id).slice(0, 8);
+  const requesterCode = requesterUser?.employee_code ?? "N/D";
+  const targetCode = targetUser?.employee_code ?? "N/D";
+
+  const context: SwapEmailContext = {
+    requestId: payload.request_id,
+    createdAt:
+      typeof requestRow.created_at === "string" ? requestRow.created_at : null,
+    expiresAt: payload.expires_at,
+    requesterName,
+    requesterCode,
+    targetName,
+    targetCode,
+    requesterShiftLabel: formatShiftLabel(
+      requesterShift as Record<string, unknown> | null,
+    ),
+    targetShiftLabel: formatShiftLabel(
+      targetShift as Record<string, unknown> | null,
+    ),
+    violationLabel:
+      typeof requestRow.rule_violation === "string"
+        ? requestRow.rule_violation
+        : null,
+    violationReason:
+      typeof requestRow.violation_reason === "string"
+        ? requestRow.violation_reason
+        : null,
+    approveUrl: payload.approve_url,
+    declineUrl: payload.decline_url,
+  };
+
+  const subject = `Ação RH: decisão de troca ${requesterName} ↔ ${targetName}`;
+  const text = buildSwapEmailText(context);
+  const html = buildSwapEmailHtml(context);
 
   const sendPayload: ProviderSendPayload = {
     hr_email: payload.hr_email,
-    cc_emails: Array.isArray(payload.cc_emails) ? payload.cc_emails : [],
+    cc_emails: ccEmails,
     subject,
     text,
     html,
@@ -269,10 +487,6 @@ Deno.serve(async (req: Request) => {
     providerErrors.push(`resend: ${resendErrorMessage}`);
 
     if (isDomainNotVerifiedError(resendErrorMessage)) {
-      const actorEmail = await resolveActorEmail(
-        supabase,
-        payload.actor_user_id,
-      );
       if (actorEmail) {
         try {
           const resendFallbackResult = await sendViaResend(
@@ -299,22 +513,8 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  try {
-    const smtpResult = await sendViaSmtp(sendPayload);
-    return json(200, {
-      ok: true,
-      provider: "smtp",
-      provider_result: smtpResult,
-      request_id: payload.request_id,
-    });
-  } catch (error) {
-    providerErrors.push(
-      `smtp: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
   return json(502, {
-    error: "Failed to send HR email using all configured providers",
+    error: "Failed to send HR email using Resend",
     details: providerErrors,
     request_id: payload.request_id,
   });

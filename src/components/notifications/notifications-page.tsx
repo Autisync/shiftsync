@@ -1,9 +1,17 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import type { NotificationService } from "@/services/backend/types";
-import type { AppNotification } from "@/types/domain";
 import { Button } from "@/components/ui/button";
 import { PaginatedListControls } from "@/components/ui/paginated-list-controls";
-import { getErrorMessage } from "@/lib/getErrorMessage";
+import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
+import {
+  LoadingListSkeleton,
+  LoadingState,
+} from "@/components/ui/loading-state";
+import { appToast } from "@/lib/app-toast";
+import { normalizeAppError } from "@/lib/app-error";
+import { resolveNotificationDestination } from "@/features/notifications/notification-routing";
+import { useNotificationFeed } from "@/features/notifications/use-notification-feed";
 
 interface NotificationsPageProps {
   userId: string;
@@ -11,62 +19,67 @@ interface NotificationsPageProps {
 }
 
 export function NotificationsPage({ userId, service }: NotificationsPageProps) {
-  const [items, setItems] = useState<AppNotification[]>([]);
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(10);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [pageSize] = useState(DEFAULT_PAGE_SIZE);
+  const { items, total, loading, error, markRead, markAllRead } =
+    useNotificationFeed({
+      userId,
+      service,
+      page,
+      pageSize,
+      backfill: true,
+    });
 
-  useEffect(() => {
-    let mounted = true;
+  const openNotification = async (id: string) => {
+    const notification = items.find((item) => item.id === id);
+    if (!notification) return;
 
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const result = await service.listNotifications(userId, {
-          page,
-          pageSize,
-        });
-        if (!mounted) return;
-        setItems(result.items);
-        setTotal(result.total);
-      } catch (err) {
-        if (!mounted) return;
-        setError(getErrorMessage(err));
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    };
-
-    void load();
-
-    return () => {
-      mounted = false;
-    };
-  }, [page, pageSize, service, userId]);
-
-  const markRead = async (id: string) => {
-    await service.markNotificationAsRead(id);
-    setItems((prev) =>
-      prev.map((item) =>
-        item.id === id
-          ? { ...item, isRead: true, readAt: new Date().toISOString() }
-          : item,
-      ),
-    );
+    try {
+      await markRead(id);
+      navigate(resolveNotificationDestination(notification).route);
+    } catch (markError) {
+      const normalized = normalizeAppError(markError, {
+        context: "notification",
+      });
+      appToast.error(
+        {
+          title: normalized.title,
+          message: normalized.message,
+        },
+        {
+          dedupeKey: `notification-page-open-${id}`,
+        },
+      );
+    }
   };
 
   const markAll = async () => {
-    await service.markAllNotificationsAsRead(userId);
-    setItems((prev) =>
-      prev.map((item) => ({
-        ...item,
-        isRead: true,
-        readAt: item.readAt ?? new Date().toISOString(),
-      })),
-    );
+    try {
+      await markAllRead();
+      appToast.success(
+        {
+          title: "Notificações atualizadas",
+          message: "Todas as notificações foram marcadas como lidas.",
+        },
+        {
+          dedupeKey: "notifications-page-mark-all",
+        },
+      );
+    } catch (markAllError) {
+      const normalized = normalizeAppError(markAllError, {
+        context: "notification",
+      });
+      appToast.error(
+        {
+          title: normalized.title,
+          message: normalized.message,
+        },
+        {
+          dedupeKey: "notifications-page-mark-all-error",
+        },
+      );
+    }
   };
 
   return (
@@ -85,11 +98,18 @@ export function NotificationsPage({ userId, service }: NotificationsPageProps) {
         </Button>
       </div>
 
-      {loading ? <p className="text-sm text-slate-500">A carregar...</p> : null}
+      {loading ? (
+        <div className="space-y-3">
+          <LoadingState inline message="A carregar notificações..." />
+          <LoadingListSkeleton rows={3} />
+        </div>
+      ) : null}
       {error ? <p className="text-sm text-rose-600">{error}</p> : null}
 
       {!loading && !error && items.length === 0 ? (
-        <p className="text-sm text-slate-500">Sem notificações.</p>
+        <p className="text-sm text-slate-500">
+          Não existem notificações para mostrar.
+        </p>
       ) : null}
 
       <div className="space-y-2">
@@ -97,7 +117,7 @@ export function NotificationsPage({ userId, service }: NotificationsPageProps) {
           <button
             key={item.id}
             type="button"
-            onClick={() => void markRead(item.id)}
+            onClick={() => void openNotification(item.id)}
             className={`w-full rounded-md border px-3 py-2 text-left ${
               item.isRead
                 ? "border-slate-200 bg-white"

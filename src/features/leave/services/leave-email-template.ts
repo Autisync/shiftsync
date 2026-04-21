@@ -63,22 +63,24 @@ export function buildLeaveEmailTemplate(
     .filter(Boolean)
     .join("\n");
 
-  const subject = `Pedido de Ausência — ${typeLabel} — ${startLabel} a ${endLabel}`;
+  const subject = `[ShiftSync] Ação RH: ${typeLabel} (${startLabel} a ${endLabel})`;
 
-  const body = `Exm.ª RH,
+  const body = `Olá RH,
 
-Venho por este meio solicitar uma ausência do tipo "${typeLabel}".
+Existe um pedido de ausência para decisão.
 
-${identity ? identity + "\n\n" : ""}Período solicitado:
-  Início: ${startLabel}
-  Fim:    ${endLabel}
-  Duração: ${duration} dia${duration !== 1 ? "s" : ""} (${startLabel} a ${endLabel})
+Resumo:
+${identity ? `${identity}\n` : ""}- Pedido por: ${employeeName || "Colaborador"}${employeeCode ? ` (${employeeCode})` : ""}
+- Tipo: ${typeLabel}
+- Período: ${startLabel} até ${endLabel}
+- Duração: ${duration} dia${duration !== 1 ? "s" : ""}
+- Alteração solicitada: atualização do planeamento de ausências para o período indicado.
+${leave.notes ? `- Observações: ${leave.notes}\n` : "- Observações: Sem observações\n"}
+Data do pedido: ${today}
 
-${leave.notes ? `Observações:\n  ${leave.notes}\n\n` : ""}Data do pedido: ${today}
+Por favor, valide este pedido no ShiftSync.
 
-Aguardo a vossa resposta.
-
-Com os melhores cumprimentos.`;
+ShiftSync`;
 
   const params = new URLSearchParams();
   params.set("subject", subject);

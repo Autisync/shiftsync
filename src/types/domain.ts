@@ -260,6 +260,8 @@ export interface AppNotification {
   title: string;
   body: string;
   link: string | null;
+  entityType?: string | null;
+  entityId?: string | null;
   meta: Record<string, unknown>;
   isRead: boolean;
   readAt: string | null;

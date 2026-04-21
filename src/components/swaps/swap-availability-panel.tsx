@@ -1,15 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import type { BackendServices } from "@/services/backend/types";
 import { getBackend } from "@/services/backend/backend-provider";
 import { getErrorMessage } from "@/lib/getErrorMessage";
@@ -29,18 +19,13 @@ import {
   getAllowedActionsForUser,
   getSwapStatusBadgeClass,
 } from "@/features/swaps/services/swap-workflow";
-import {
-  generateOutlookComposeLink,
-  generateSwapEmailTemplate,
-  generateGmailComposeLink,
-  generateMailtoLink,
-} from "@/lib/swap-email-template";
+import {} from "@/lib/swap-email-template";
 import { HRSettingsModal } from "@/components/swaps/hr-settings-modal";
 import {
   LoadingListSkeleton,
   LoadingState,
 } from "@/components/ui/loading-state";
-import { toast } from "sonner";
+import { appToast as toast } from "@/lib/app-toast";
 
 interface SwapAvailabilityPanelProps {
   userId: string;
@@ -166,24 +151,6 @@ export function SwapAvailabilityPanel({
   const [userNamesById, setUserNamesById] = useState<Record<string, string>>(
     {},
   );
-  const [emailDraftByRequestId, setEmailDraftByRequestId] = useState<
-    Record<
-      string,
-      {
-        to: string;
-        cc: string;
-        subject: string;
-        body: string;
-        mailto: string;
-        gmailCompose: string;
-        outlookCompose: string;
-      }
-    >
-  >({});
-  const [confirmSentRequestId, setConfirmSentRequestId] = useState<
-    string | null
-  >(null);
-
   const openOwnShiftIds = useMemo(() => {
     return new Set(
       openAvailabilities
@@ -380,13 +347,19 @@ export function SwapAvailabilityPanel({
       setFeedback(
         "Pedido aceite com sucesso. Agora envie manualmente para RH.",
       );
-      toast.success("Pedido aceite. Envio ao RH agora é manual.");
+      toast.success({
+        title: "Pedido aceite",
+        message: "Envio ao RH agora é manual.",
+      });
 
       await loadData();
     } catch (err) {
       const message = getErrorMessage(err);
       setError(message);
-      toast.error(`Falha ao aceitar pedido: ${message}`);
+      toast.error({
+        title: "Falha ao aceitar pedido",
+        message,
+      });
     } finally {
       setBusyRequestId(null);
     }
@@ -398,166 +371,14 @@ export function SwapAvailabilityPanel({
     setError(null);
 
     try {
-      if (!hrSettings) {
-        setError("HR settings not configured. Please configure first.");
-        setBusyRequestId(null);
-        return;
-      }
-
-      // Get profiles if not in cache
-      let profiles = requestProfiles[request.id];
-      if (!profiles) {
-        const requester =
-          (await api.users.getUserProfile(request.requesterUserId)) ??
-          fallbackProfile(request.requesterUserId);
-        const target =
-          (await api.users.getUserProfile(request.targetUserId)) ??
-          fallbackProfile(request.targetUserId);
-
-        profiles = { requester, target };
-        setRequestProfiles((prev) => ({ ...prev, [request.id]: profiles }));
-      }
-
-      // Get shifts
-      const requesterShift = await api.shifts.getShiftById(
-        request.requesterShiftId,
-      );
-      const targetShift = request.targetShiftId
-        ? await api.shifts.getShiftById(request.targetShiftId)
-        : null;
-
-      if (!requesterShift) {
-        throw new Error("Requester shift not found");
-      }
-
-      const decisionLinks = await api.swaps.createHrDecisionLinks({
-        requestId: request.id,
-        actorUserId: userId,
-        baseUrl: `${window.location.origin}${import.meta.env.BASE_URL ?? "/"}`,
-        expiresInHours: 24,
-      });
-
-      // Generate email
-      const template = generateSwapEmailTemplate({
-        request,
-        requester: profiles.requester,
-        target: profiles.target,
-        requesterShift,
-        targetShift,
-        hrEmail: hrSettings.hrEmail,
-        ccEmails: hrSettings.ccEmails,
-        approveUrl: decisionLinks.approveUrl,
-        declineUrl: decisionLinks.declineUrl,
-        expiresAt: decisionLinks.expiresAt,
-      });
-
-      const mailto = generateMailtoLink(
-        template.subject,
-        template.body,
-        template.to,
-        template.cc,
-      );
-
-      const gmailCompose = generateGmailComposeLink(
-        template.subject,
-        template.body,
-        template.to,
-        template.cc,
-      );
-
-      const outlookCompose = generateOutlookComposeLink(
-        template.subject,
-        template.body,
-        template.to,
-        template.cc,
-      );
-
-      setEmailDraftByRequestId((prev) => ({
-        ...prev,
-        [request.id]: {
-          to: template.to,
-          cc: template.cc,
-          subject: template.subject,
-          body: template.body,
-          mailto,
-          gmailCompose,
-          outlookCompose,
-        },
-      }));
-
-      // Keep a copy in clipboard as a reliable fallback.
-      const clipboardPayload = [
-        `To: ${template.to}`,
-        `CC: ${template.cc || "-"}`,
-        `Subject: ${template.subject}`,
-        "",
-        template.body,
-      ].join("\n");
-      try {
-        if (typeof navigator !== "undefined" && navigator.clipboard) {
-          await navigator.clipboard.writeText(clipboardPayload);
-        }
-      } catch {
-        // Clipboard may fail on insecure contexts; ignore gracefully.
-      }
-      setFeedback(
-        "Rascunho de email preparado. Use os botoes do pedido para abrir Gmail/Mail app e depois marque como enviado.",
-      );
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setBusyRequestId(null);
-    }
-  };
-
-  const onConfirmHREmailSent = async (requestId: string) => {
-    setBusyRequestId(requestId);
-    setFeedback(null);
-    setError(null);
-
-    try {
-      await api.swaps.markHREmailSent(requestId, userId);
-      setEmailDraftByRequestId((prev) => {
-        const next = { ...prev };
-        delete next[requestId];
-        return next;
-      });
-      setFeedback("Email enviado. Marcado como enviado no sistema.");
+      await api.swaps.sendHREmail(request.id, userId);
+      setFeedback("Email enviado ao RH com cópia automática para si.");
+      toast.success("Email enviado ao RH.");
       await loadData();
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
       setBusyRequestId(null);
-    }
-  };
-
-  const onCopyEmailDraft = async (requestId: string) => {
-    const draft = emailDraftByRequestId[requestId];
-    if (!draft) {
-      return;
-    }
-
-    const clipboardPayload = [
-      `To: ${draft.to}`,
-      `CC: ${draft.cc || "-"}`,
-      `Subject: ${draft.subject}`,
-      "",
-      draft.body,
-    ].join("\n");
-
-    try {
-      if (typeof navigator !== "undefined" && navigator.clipboard) {
-        await navigator.clipboard.writeText(clipboardPayload);
-        setFeedback("Conteudo do email copiado para a area de transferencia.");
-      } else {
-        setFeedback(
-          "Clipboard indisponivel neste navegador. Copie manualmente.",
-        );
-      }
-    } catch {
-      setFeedback(
-        "Nao foi possivel copiar automaticamente. Copie manualmente.",
-      );
     }
   };
 
@@ -647,62 +468,9 @@ export function SwapAvailabilityPanel({
           </div>
         )}
 
-        {emailDraftByRequestId[request.id] && !request.hrEmailSent && (
-          <div className="mt-2 space-y-2 rounded border border-amber-300 bg-amber-50 px-2 py-2 text-xs text-amber-900">
-            <p className="font-medium">Rascunho de email pronto</p>
-            <p>
-              Escolha como enviar e, depois do envio real, marque no sistema.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <a
-                href={emailDraftByRequestId[request.id].gmailCompose}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center rounded border border-amber-400 bg-white px-2 py-1 font-medium"
-              >
-                Abrir Gmail
-              </a>
-              <a
-                href={emailDraftByRequestId[request.id].outlookCompose}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center rounded border border-amber-400 bg-white px-2 py-1 font-medium"
-              >
-                Abrir Outlook
-              </a>
-              <a
-                href={emailDraftByRequestId[request.id].mailto}
-                className="inline-flex items-center rounded border border-amber-400 bg-white px-2 py-1 font-medium"
-              >
-                Tentar Mail App
-              </a>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  void onCopyEmailDraft(request.id);
-                }}
-              >
-                Copiar Conteudo
-              </Button>
-              <Button
-                size="sm"
-                variant="default"
-                disabled={busyRequestId === request.id}
-                onClick={() => {
-                  setConfirmSentRequestId(request.id);
-                }}
-              >
-                Marcar Como Enviado
-              </Button>
-            </div>
-          </div>
-        )}
-
         {actions.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2">
             {actions.map((status) => {
-              // Special handling for acceptance with validation
               if (status === "accepted" && request.status === "pending") {
                 return (
                   <Button
@@ -714,39 +482,12 @@ export function SwapAvailabilityPanel({
                       void onAcceptSwap(request);
                     }}
                   >
-                    {"Aceitar pedido"}
+                    Aceitar pedido
                   </Button>
                 );
               }
 
-              // Special handling for sending HR email
-              if (
-                status === "submitted_to_hr" &&
-                request.status === "accepted" &&
-                request.requesterUserId === userId
-              ) {
-                return (
-                  <Button
-                    key={`${request.id}-send-email`}
-                    size="sm"
-                    variant="default"
-                    disabled={busyRequestId === request.id}
-                    onClick={() => {
-                      void onSendHREmail(request);
-                    }}
-                  >
-                    {"Enviar para RH"}
-                  </Button>
-                );
-              }
-
-              // Special handling for applying swap
-              if (
-                status === "approved" &&
-                request.status === "approved" &&
-                request.requesterUserId === userId &&
-                !request.calendarApplied
-              ) {
+              if (status === "applied" && !request.calendarApplied) {
                 return (
                   <Button
                     key={`${request.id}-apply`}
@@ -757,12 +498,11 @@ export function SwapAvailabilityPanel({
                       void onApplySwap(request);
                     }}
                   >
-                    {"Aplicar Troca"}
+                    Aplicar Troca
                   </Button>
                 );
               }
 
-              // Default status transition
               return (
                 <Button
                   key={`${request.id}-${status}`}
@@ -1019,40 +759,6 @@ export function SwapAvailabilityPanel({
         onClose={() => setHrSettingsOpen(false)}
         onSaved={(settings) => setHrSettings(settings)}
       />
-
-      <AlertDialog
-        open={confirmSentRequestId !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setConfirmSentRequestId(null);
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirmar envio para RH</AlertDialogTitle>
-            <AlertDialogDescription>
-              Tem a certeza que o email foi enviado para o RH? Esta acao vai
-              atualizar o estado para "submetido ao RH".
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Nao</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (!confirmSentRequestId) {
-                  return;
-                }
-                const requestId = confirmSentRequestId;
-                setConfirmSentRequestId(null);
-                void onConfirmHREmailSent(requestId);
-              }}
-            >
-              Sim, enviado
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

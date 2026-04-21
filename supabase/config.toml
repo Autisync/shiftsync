@@ -22,6 +22,12 @@ verify_jwt = false
 [functions."send-swap-hr-email"]
 verify_jwt = false
 
+[functions."send-leave-hr-email"]
+verify_jwt = false
+
+[functions."send-request-reminder-email"]
+verify_jwt = false
+
 [functions."swap-hr-actions"]
 verify_jwt = false
 

@@ -27,27 +27,50 @@ export function useAuth(): UseAuthReturn {
     let mounted = true;
     const backend = getBackend();
 
-    // Bootstrap: restore existing session on mount
-    backend.auth.getSession().then(async (restored) => {
-      if (!mounted) return;
-      setSession(restored);
-      if (restored?.userId) {
-        const p = await backend.users.getUserProfile(restored.userId);
-        if (mounted) setProfile(p);
+    const loadProfile = async (userId: string) => {
+      try {
+        const nextProfile = await backend.users.getUserProfile(userId);
+        if (mounted) {
+          setProfile(nextProfile);
+        }
+      } catch {
+        if (mounted) {
+          setProfile(null);
+        }
       }
-      setIsLoading(false);
-    });
+    };
+
+    // Bootstrap: restore existing session on mount
+    void backend.auth
+      .getSession()
+      .then(async (restored) => {
+        if (!mounted) return;
+        setSession(restored);
+        if (restored?.userId) {
+          await loadProfile(restored.userId);
+        }
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setSession(null);
+        setProfile(null);
+      })
+      .finally(() => {
+        if (mounted) {
+          setIsLoading(false);
+        }
+      });
 
     // Subscribe to subsequent auth state changes
     const unsubscribe = backend.auth.onAuthChange(async (updated) => {
       if (!mounted) return;
       setSession(updated);
       if (updated?.userId) {
-        const p = await backend.users.getUserProfile(updated.userId);
-        if (mounted) setProfile(p);
+        await loadProfile(updated.userId);
       } else {
         setProfile(null);
       }
+      setIsLoading(false);
     });
 
     return () => {

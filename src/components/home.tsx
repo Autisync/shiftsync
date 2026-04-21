@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useGoogleLogin } from "@react-oauth/google";
 import { AuthCard } from "@/components/auth/auth-card";
@@ -15,7 +15,7 @@ import { getErrorMessage } from "@/lib/getErrorMessage";
 import { getBackend } from "@/services/backend/backend-provider";
 import { getConfig } from "@/config/env";
 import type { CalendarSyncRunOptions } from "@/services/backend/types";
-import { toast } from "sonner";
+import { appToast as toast } from "@/lib/app-toast";
 import Footer from "../components/Footer";
 import {
   persistUploadMetadata,
@@ -30,6 +30,17 @@ import { SwapHRActionPage } from "@/components/swaps/swap-hr-action-page";
 import { LeaveHRActionPage } from "@/components/leave/leave-hr-action-page";
 import { ScheduleSharePage } from "@/components/upload/schedule-share-page";
 import { LoadingState } from "@/components/ui/loading-state";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useSessionInactivity } from "@/hooks/use-session-inactivity";
 
 import { useConsent } from "@/lib/cookies/ConsentContext";
 import { SpeedInsights } from "@vercel/speed-insights/react";
@@ -205,6 +216,7 @@ function Home() {
   const isScheduleHistoryRoute =
     location.pathname.endsWith("/schedule-history") ||
     location.pathname.endsWith("/schedule-share");
+  const sessionTerminationInProgressRef = useRef(false);
   // Authentication state
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string>("");
@@ -212,6 +224,7 @@ function Home() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [isRestoringSession, setIsRestoringSession] = useState(true);
+  const [sessionWarningOpen, setSessionWarningOpen] = useState(false);
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
   const [profileInitialName, setProfileInitialName] = useState<string>("");
   const [profileInitialCode, setProfileInitialCode] = useState<string>("");
@@ -431,6 +444,60 @@ function Home() {
     };
   }, []);
 
+  const clearSession = useCallback(() => {
+    localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
+    localStorage.removeItem(STORAGE_KEYS.USER_EMAIL);
+    setAccessToken(null);
+    setUserEmail("");
+    setUserDisplayName("");
+    setCurrentUserId(null);
+    setProfileDialogOpen(false);
+    setSessionWarningOpen(false);
+    setCurrentStep("auth");
+    navigate("/");
+  }, [navigate]);
+
+  const terminateSession = useCallback(
+    async (reason: "logout" | "expired" | "inactive") => {
+      sessionTerminationInProgressRef.current = true;
+
+      if (getConfig().backendMode === "supabase") {
+        try {
+          await backend.auth.signOut();
+        } catch (error) {
+          if (reason === "logout") {
+            toast.error(supabaseLogoutFailureMessage(error), {
+              dedupeKey: "logout-failure",
+            });
+          }
+        }
+      }
+
+      clearSession();
+      setSelectedCalendar(null);
+      setShifts([]);
+
+      if (reason === "logout") {
+        toast.info(feedbackMessages.sessionLogoutSuccess, {
+          dedupeKey: "logout-success",
+        });
+      } else if (reason === "inactive") {
+        toast.warning(feedbackMessages.inactivityLogout, {
+          dedupeKey: "inactive-logout",
+        });
+      } else {
+        toast.error(feedbackMessages.sessionExpired, {
+          dedupeKey: "session-expired",
+        });
+      }
+
+      window.setTimeout(() => {
+        sessionTerminationInProgressRef.current = false;
+      }, 500);
+    },
+    [backend.auth, clearSession],
+  );
+
   useEffect(() => {
     if (getConfig().backendMode !== "supabase") {
       return;
@@ -438,6 +505,12 @@ function Home() {
 
     return backend.auth.onAuthChange(async (session) => {
       if (!session) {
+        if (sessionTerminationInProgressRef.current) {
+          return;
+        }
+        if (currentStep !== "auth") {
+          void terminateSession("expired");
+        }
         return;
       }
 
@@ -450,7 +523,7 @@ function Home() {
       void loadHrSettings(session.userId);
       void loadDefaultCalendarPreference(session.userId);
     });
-  }, [backend.users]);
+  }, [backend.auth, currentStep, terminateSession]);
 
   useEffect(() => {
     const handleCompatMode = (event: Event) => {
@@ -482,7 +555,9 @@ function Home() {
       } else {
         // Token is invalid/expired, clear storage
         clearSession();
-        toast.error(feedbackMessages.sessionExpired);
+        toast.error(feedbackMessages.sessionExpired, {
+          dedupeKey: "session-expired",
+        });
       }
     } catch {
       // Network error or token invalid
@@ -490,18 +565,6 @@ function Home() {
     } finally {
       setIsRestoringSession(false);
     }
-  };
-
-  const clearSession = () => {
-    localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
-    localStorage.removeItem(STORAGE_KEYS.USER_EMAIL);
-    setAccessToken(null);
-    setUserEmail("");
-    setUserDisplayName("");
-    setCurrentUserId(null);
-    setProfileDialogOpen(false);
-    setCurrentStep("auth");
-    navigate("/");
   };
 
   const googleLogin = useGoogleLogin({
@@ -546,6 +609,24 @@ function Home() {
     },
     scope: "openid email profile https://www.googleapis.com/auth/calendar",
   });
+
+  const { warningOpen, secondsRemaining, staySignedIn } = useSessionInactivity({
+    enabled: Boolean(currentUserId || accessToken) && currentStep !== "auth",
+    onWarn: () => {
+      setSessionWarningOpen(true);
+      toast.warning(feedbackMessages.inactivityWarning, {
+        dedupeKey: "session-inactivity-warning",
+      });
+    },
+    onExpire: () => {
+      setSessionWarningOpen(false);
+      void terminateSession("inactive");
+    },
+  });
+
+  useEffect(() => {
+    setSessionWarningOpen(warningOpen);
+  }, [warningOpen]);
 
   const handleSignIn = async (gdprConsent: boolean) => {
     if (!gdprConsent) return;
@@ -826,23 +907,11 @@ function Home() {
   };
 
   const handleLogout = async () => {
-    if (getConfig().backendMode === "supabase") {
-      try {
-        await backend.auth.signOut();
-      } catch (error) {
-        toast.error(supabaseLogoutFailureMessage(error));
-      }
-    }
-
-    clearSession();
-    setSelectedCalendar(null);
-    setShifts([]);
-    toast.info(feedbackMessages.sessionLogoutSuccess);
+    await terminateSession("logout");
   };
 
   const handleTokenExpired = () => {
-    clearSession();
-    toast.error(feedbackMessages.sessionExpired);
+    void terminateSession("expired");
   };
 
   const handleOpenSettings = async () => {
@@ -1148,6 +1217,32 @@ function Home() {
             toast.success(feedbackMessages.profileUpdatedInSettings);
           }}
         />
+
+        <AlertDialog open={sessionWarningOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Sessão prestes a terminar</AlertDialogTitle>
+              <AlertDialogDescription>
+                Esteve inativo durante algum tempo. Por segurança, a sessão vai
+                terminar em {secondsRemaining} segundo(s).
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => void handleLogout()}>
+                Terminar sessão
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(event) => {
+                  event.preventDefault();
+                  staySignedIn();
+                  setSessionWarningOpen(false);
+                }}
+              >
+                Continuar ligado
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
       <SpeedInsights />
       <Footer />

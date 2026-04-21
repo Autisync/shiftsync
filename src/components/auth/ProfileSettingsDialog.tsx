@@ -22,7 +22,7 @@ import type { GoogleCalendar } from "@/types/shift";
 import { CalendarCheck2, Mail, UserRound } from "lucide-react";
 import { LoadingState } from "@/components/ui/loading-state";
 import { Spinner } from "@/components/ui/spinner";
-import { toast } from "sonner";
+import { appToast as toast } from "@/lib/app-toast";
 
 interface ProfileSettingsDialogProps {
   open: boolean;
@@ -335,7 +335,10 @@ export function ProfileSettingsDialog({
               } catch (error) {
                 const message = getErrorMessage(error);
                 setSaveError(message);
-                toast.error(`Falha ao guardar perfil: ${message}`);
+                toast.error({
+                  title: "Falha ao guardar perfil",
+                  message,
+                });
               } finally {
                 setSaving(false);
               }

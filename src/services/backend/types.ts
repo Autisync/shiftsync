@@ -249,6 +249,7 @@ export interface SwapService {
     Array<{ shift: Shift; availability: SwapAvailability }>
   >;
   createSwapRequest(data: CreateSwapRequestInput): Promise<SwapRequest>;
+  getSwapRequestById(id: string): Promise<SwapRequest | null>;
   getSwapRequestsForUser(userId: string): Promise<SwapRequest[]>;
   getSwapRequestsForUserPaginated(
     userId: string,
@@ -265,6 +266,7 @@ export interface SwapService {
     targetUserId: string,
     validationResult: AcceptSwapValidationInput,
   ): Promise<SwapRequest>;
+  sendHREmail(requestId: string, actorUserId?: string): Promise<SwapRequest>;
   markHREmailSent(
     requestId: string,
     actorUserId?: string,
@@ -287,6 +289,7 @@ export interface LeaveService {
   /** Creates a leave request as a draft (status = draft). */
   createLeaveRequest(data: CreateLeaveRequestInput): Promise<LeaveRequest>;
 
+  getLeaveRequestById(id: string): Promise<LeaveRequest | null>;
   getLeaveRequestsForUser(userId: string): Promise<LeaveRequest[]>;
   getLeaveRequestsForUserPaginated(
     userId: string,

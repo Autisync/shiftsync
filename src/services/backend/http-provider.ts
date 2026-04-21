@@ -75,12 +75,14 @@ const httpSwaps: SwapService = {
   closeAvailability: () => notImplemented("swaps.closeAvailability"),
   getOpenAvailabilities: () => notImplemented("swaps.getOpenAvailabilities"),
   createSwapRequest: () => notImplemented("swaps.createSwapRequest"),
+  getSwapRequestById: () => notImplemented("swaps.getSwapRequestById"),
   getSwapRequestsForUser: () => notImplemented("swaps.getSwapRequestsForUser"),
   getSwapRequestsForUserPaginated: () =>
     notImplemented("swaps.getSwapRequestsForUserPaginated"),
   updateSwapStatus: (_id, _status, _actorUserId) =>
     notImplemented("swaps.updateSwapStatus"),
   acceptSwapRequest: () => notImplemented("swaps.acceptSwapRequest"),
+  sendHREmail: () => notImplemented("swaps.sendHREmail"),
   markHREmailSent: () => notImplemented("swaps.markHREmailSent"),
   markHRApproved: () => notImplemented("swaps.markHRApproved"),
   createHrDecisionLinks: () => notImplemented("swaps.createHrDecisionLinks"),
@@ -93,6 +95,7 @@ const httpSwaps: SwapService = {
 
 const httpLeave: LeaveService = {
   createLeaveRequest: () => notImplemented("leave.createLeaveRequest"),
+  getLeaveRequestById: () => notImplemented("leave.getLeaveRequestById"),
   getLeaveRequestsForUser: () =>
     notImplemented("leave.getLeaveRequestsForUser"),
   getLeaveRequestsForUserPaginated: () =>

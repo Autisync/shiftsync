@@ -75,47 +75,53 @@ export function generateSwapEmailTemplate(input: EmailTemplateInput): {
     : "Sem violações detectadas";
 
   const summary = `
-PEDIDO DE TROCA DE TURNO
+Olá RH,
 
-Requerente: ${requesterName} (${requesterCode})
-Alvo: ${targetName} (${targetCode})
-Status: ${status}
+Existe um pedido de troca de turno pendente de decisão.
 
-Turno Requerente:
-  Data: ${reqShiftDate}
-  Hora: ${reqShiftTime}
-  Duração: ${getShiftDuration(input.requesterShift)}
+Resumo:
+- Requerente: ${requesterName} (${requesterCode})
+- Colega: ${targetName} (${targetCode})
+- Estado: ${status}
+
+Mudança de turno (por quem e para quê):
+- Pedido por: ${requesterName} (${requesterCode})
+- Alteração pretendida: trocar o turno do requerente pelo turno do colega para equilibrar o planeamento.
+
+Turno do requerente:
+- Data: ${reqShiftDate}
+- Hora: ${reqShiftTime}
+- Duração: ${getShiftDuration(input.requesterShift)}
 
 ${
   input.targetShift
-    ? `Turno Alvo:
-  Data: ${new Date(input.targetShift.date).toLocaleDateString("pt-PT")}
-  Hora: ${new Date(input.targetShift.startsAt).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })} - ${new Date(input.targetShift.endsAt).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}
-  Duração: ${getShiftDuration(input.targetShift)}`
-    : ""
+    ? `Turno do colega:
+- Data: ${new Date(input.targetShift.date).toLocaleDateString("pt-PT")}
+- Hora: ${new Date(input.targetShift.startsAt).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })} - ${new Date(input.targetShift.endsAt).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}
+- Duração: ${getShiftDuration(input.targetShift)}`
+    : "Turno do colega: Não disponível"
 }
 
-Resultado da Troca:
+Resultado esperado:
 ${swapResult}
 
-Validação de Restrições:
+Validação de regras:
 ${violation}
 
-Decisão do RH (link seguro e de uso único):
-Aprovar: ${input.approveUrl}
-Recusar: ${input.declineUrl}
-Validade: ${formatDateTime(input.expiresAt)}
+Ações RH (link seguro e de uso único):
+- Aprovar: ${input.approveUrl}
+- Recusar: ${input.declineUrl}
+- Validade: ${formatDateTime(input.expiresAt)}
 
-ID do Pedido: ${input.request.id}
-Criado em: ${formatDateTime(input.request.createdAt)}
-Atualizado em: ${formatDateTime(input.request.updatedAt)}
+Metadados:
+- Pedido: ${input.request.id}
+- Criado em: ${formatDateTime(input.request.createdAt)}
+- Atualizado em: ${formatDateTime(input.request.updatedAt)}
 
----
-Este email foi gerado automaticamente pelo ShiftSync.
-Confirme manualmente no sistema antes de processar a troca.
+ShiftSync
   `.trim();
 
-  const subject = `Pedido de Troca de Turno - ${requesterName} ↔ ${targetName}`;
+  const subject = `[ShiftSync] Ação RH: troca ${requesterName} ↔ ${targetName}`;
   const cc = input.ccEmails.join(",");
 
   return {

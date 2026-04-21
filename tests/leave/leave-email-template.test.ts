@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildLeaveEmailTemplate } from "../../src/features/leave/services/leave-email-template";
 import type { LeaveRequest } from "../../src/types/domain";
 
@@ -29,6 +29,15 @@ function makeLeave(overrides: Partial<LeaveRequest> = {}): LeaveRequest {
 }
 
 describe("buildLeaveEmailTemplate", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-21T10:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("produces a mailto: URL with the correct recipient", () => {
     const result = buildLeaveEmailTemplate({
       leave: makeLeave(),
@@ -132,5 +141,24 @@ describe("buildLeaveEmailTemplate", () => {
     expect(r1.subject).toBe(r2.subject);
     // body includes today's date, so only compare structure
     expect(r1.mailtoUrl.split("?")[0]).toBe(r2.mailtoUrl.split("?")[0]);
+  });
+
+  it("matches snapshot for hr-friendly modern copy", () => {
+    const result = buildLeaveEmailTemplate({
+      leave: makeLeave({
+        type: "vacation",
+        notes: "Férias de verão com deslocação familiar.",
+      }),
+      hrEmail: "hr@example.com",
+      employeeName: "João Silva",
+      employeeCode: "EMP-42",
+      ccEmails: ["manager@example.com"],
+    });
+
+    expect({
+      subject: result.subject,
+      body: result.body,
+      mailtoPrefix: result.mailtoUrl.split("&body=")[0],
+    }).toMatchSnapshot();
   });
 });

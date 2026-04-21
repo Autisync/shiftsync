@@ -1,10 +1,11 @@
-import { toast } from "sonner";
-import { getErrorMessage } from "@/lib/getErrorMessage";
+import { normalizeAppError } from "@/lib/app-error";
+import { appToast } from "@/lib/app-toast";
 
 interface AsyncToastMessages<T> {
   loading: string;
   success: string | ((result: T) => string);
   error?: string | ((error: unknown) => string);
+  dedupeKey?: string;
 }
 
 function resolveMessage<T>(
@@ -18,19 +19,33 @@ export async function runWithToast<T>(
   action: () => Promise<T>,
   messages: AsyncToastMessages<T>,
 ): Promise<T> {
-  const toastId = toast.loading(messages.loading);
+  const toastId = appToast.loading(messages.loading, {
+    dedupeKey: messages.dedupeKey,
+  });
 
   try {
     const result = await action();
-    toast.success(resolveMessage(messages.success, result), { id: toastId });
+    appToast.success(resolveMessage(messages.success, result), {
+      id: toastId,
+      dedupeKey: messages.dedupeKey,
+    });
     return result;
   } catch (error) {
-    const fallbackMessage = getErrorMessage(error);
+    const fallbackMessage = normalizeAppError(error).message;
     const errorMessage = messages.error
       ? resolveMessage(messages.error, error)
       : fallbackMessage;
 
-    toast.error(errorMessage, { id: toastId });
+    appToast.error(
+      {
+        title: "Ação não concluída",
+        message: errorMessage,
+      },
+      {
+        id: toastId,
+        dedupeKey: messages.dedupeKey,
+      },
+    );
     throw error;
   }
 }

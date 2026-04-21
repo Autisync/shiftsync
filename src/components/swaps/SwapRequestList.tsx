@@ -42,6 +42,7 @@ function persistSeenSets(userId: string, seen: Record<string, Set<string>>) {
 
 interface SwapRequestListProps {
   requests: SwapRequest[];
+  focusedRequest?: SwapRequest | null;
   currentUserId: string;
   hasGoogleSyncContext?: boolean;
   userDisplayNames?: Record<string, string>;
@@ -53,10 +54,12 @@ interface SwapRequestListProps {
   onPageChange: (page: number) => void;
   onStatusChange: (request: SwapRequest, status: SwapRequestStatus) => void;
   onApplySwap: (request: SwapRequest) => void;
+  focusedRequestId?: string | null;
 }
 
 export function SwapRequestList({
   requests,
+  focusedRequest = null,
   currentUserId,
   hasGoogleSyncContext,
   userDisplayNames,
@@ -68,6 +71,7 @@ export function SwapRequestList({
   onPageChange,
   onStatusChange,
   onApplySwap,
+  focusedRequestId = null,
 }: SwapRequestListProps) {
   const [tab, setTab] = useState("pendentes");
   const [seen, setSeen] = useState<Record<string, Set<string>>>(() =>
@@ -90,6 +94,10 @@ export function SwapRequestList({
   );
 
   groupedRef.current = grouped;
+
+  // Track the last focusedRequestId we already scrolled to so data-refresh
+  // polling doesn't re-scroll the user away from wherever they navigated.
+  const scrolledToRef = useRef<string | null>(null);
 
   const markTabSeen = useCallback(
     (tabKey: string, items: SwapRequest[]) => {
@@ -148,6 +156,48 @@ export function SwapRequestList({
     };
   }, [seen, grouped]);
 
+  useEffect(() => {
+    if (!focusedRequestId) {
+      scrolledToRef.current = null;
+      return;
+    }
+
+    // Reset guard when the focused id changes.
+    if (scrolledToRef.current !== focusedRequestId) {
+      scrolledToRef.current = null;
+    }
+
+    // Already scrolled to this id — don't re-scroll on data refreshes.
+    if (scrolledToRef.current === focusedRequestId) {
+      return;
+    }
+
+    const nextTab = Object.entries(grouped).find(([, items]) =>
+      items.some((request) => request.id === focusedRequestId),
+    )?.[0];
+
+    if (nextTab && nextTab !== tab) {
+      handleTabChange(nextTab);
+      return;
+    }
+
+    scrolledToRef.current = focusedRequestId;
+    const frameId = window.requestAnimationFrame(() => {
+      const element = document.getElementById(
+        `swap-request-card-${focusedRequestId}`,
+      );
+      const spotlight = document.getElementById(
+        `swap-request-spotlight-${focusedRequestId}`,
+      );
+      (element ?? spotlight)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [focusedRequestId, grouped, handleTabChange, tab]);
+
   const renderList = (items: SwapRequest[]) => {
     if (loading && items.length === 0) {
       return (
@@ -165,70 +215,96 @@ export function SwapRequestList({
     return (
       <div className="space-y-2">
         {items.map((request) => (
-          <SwapRequestCard
-            key={request.id}
-            request={request}
-            currentUserId={currentUserId}
-            hasGoogleSyncContext={hasGoogleSyncContext}
-            userDisplayNames={userDisplayNames}
-            shiftById={shiftById}
-            onStatusChange={onStatusChange}
-            onApplySwap={onApplySwap}
-          />
+          <div key={request.id} id={`swap-request-card-${request.id}`}>
+            <SwapRequestCard
+              request={request}
+              currentUserId={currentUserId}
+              hasGoogleSyncContext={hasGoogleSyncContext}
+              userDisplayNames={userDisplayNames}
+              shiftById={shiftById}
+              onStatusChange={onStatusChange}
+              onApplySwap={onApplySwap}
+              isHighlighted={focusedRequestId === request.id}
+            />
+          </div>
         ))}
       </div>
     );
   };
 
   return (
-    <Tabs value={tab} onValueChange={handleTabChange}>
-      <TabsList className="grid w-full grid-cols-3 md:grid-cols-6">
-        <TabsTrigger value="pendentes">
-          <TabBadge label="Pendentes" unseen={unseenCounts.pendentes} />
-        </TabsTrigger>
-        <TabsTrigger value="enviados">
-          <TabBadge label="Enviados" unseen={unseenCounts.enviados} />
-        </TabsTrigger>
-        <TabsTrigger value="recebidos">
-          <TabBadge label="Recebidos" unseen={unseenCounts.recebidos} />
-        </TabsTrigger>
-        <TabsTrigger value="aprovados">
-          <TabBadge label="Aprovados" unseen={unseenCounts.aprovados} />
-        </TabsTrigger>
-        <TabsTrigger value="rejeitados">
-          <TabBadge label="Rejeitados" unseen={unseenCounts.rejeitados} />
-        </TabsTrigger>
-        <TabsTrigger value="todos">
-          <TabBadge label="Todos" unseen={unseenCounts.todos} />
-        </TabsTrigger>
-      </TabsList>
-      <TabsContent value="pendentes" className="mt-3">
-        {renderList(grouped.pendentes)}
-      </TabsContent>
-      <TabsContent value="enviados" className="mt-3">
-        {renderList(grouped.enviados)}
-      </TabsContent>
-      <TabsContent value="recebidos" className="mt-3">
-        {renderList(grouped.recebidos)}
-      </TabsContent>
-      <TabsContent value="aprovados" className="mt-3">
-        {renderList(grouped.aprovados)}
-      </TabsContent>
-      <TabsContent value="rejeitados" className="mt-3">
-        {renderList(grouped.rejeitados)}
-      </TabsContent>
-      <TabsContent value="todos" className="mt-3">
-        {renderList(grouped.todos)}
-      </TabsContent>
+    <div className="space-y-3">
+      {focusedRequest &&
+      !grouped.todos.some((request) => request.id === focusedRequest.id) ? (
+        <div
+          id={`swap-request-spotlight-${focusedRequest.id}`}
+          className="rounded-xl border border-blue-200 bg-blue-50/60 p-3"
+        >
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-blue-700">
+            Pedido aberto via notificação
+          </p>
+          <SwapRequestCard
+            request={focusedRequest}
+            currentUserId={currentUserId}
+            hasGoogleSyncContext={hasGoogleSyncContext}
+            userDisplayNames={userDisplayNames}
+            shiftById={shiftById}
+            onStatusChange={onStatusChange}
+            onApplySwap={onApplySwap}
+            isHighlighted
+          />
+        </div>
+      ) : null}
 
-      <PaginatedListControls
-        page={page}
-        pageSize={pageSize}
-        total={total}
-        loading={loading}
-        onPageChange={onPageChange}
-      />
-    </Tabs>
+      <Tabs value={tab} onValueChange={handleTabChange}>
+        <TabsList className="grid w-full grid-cols-3 md:grid-cols-6">
+          <TabsTrigger value="pendentes">
+            <TabBadge label="Pendentes" unseen={unseenCounts.pendentes} />
+          </TabsTrigger>
+          <TabsTrigger value="enviados">
+            <TabBadge label="Enviados" unseen={unseenCounts.enviados} />
+          </TabsTrigger>
+          <TabsTrigger value="recebidos">
+            <TabBadge label="Recebidos" unseen={unseenCounts.recebidos} />
+          </TabsTrigger>
+          <TabsTrigger value="aprovados">
+            <TabBadge label="Aprovados" unseen={unseenCounts.aprovados} />
+          </TabsTrigger>
+          <TabsTrigger value="rejeitados">
+            <TabBadge label="Rejeitados" unseen={unseenCounts.rejeitados} />
+          </TabsTrigger>
+          <TabsTrigger value="todos">
+            <TabBadge label="Todos" unseen={unseenCounts.todos} />
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="pendentes" className="mt-3">
+          {renderList(grouped.pendentes)}
+        </TabsContent>
+        <TabsContent value="enviados" className="mt-3">
+          {renderList(grouped.enviados)}
+        </TabsContent>
+        <TabsContent value="recebidos" className="mt-3">
+          {renderList(grouped.recebidos)}
+        </TabsContent>
+        <TabsContent value="aprovados" className="mt-3">
+          {renderList(grouped.aprovados)}
+        </TabsContent>
+        <TabsContent value="rejeitados" className="mt-3">
+          {renderList(grouped.rejeitados)}
+        </TabsContent>
+        <TabsContent value="todos" className="mt-3">
+          {renderList(grouped.todos)}
+        </TabsContent>
+
+        <PaginatedListControls
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          loading={loading}
+          onPageChange={onPageChange}
+        />
+      </Tabs>
+    </div>
   );
 }
 

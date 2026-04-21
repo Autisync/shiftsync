@@ -9,13 +9,15 @@ export type { PaginatedQuery, PaginatedResult } from "@/types/domain";
 
 /**
  * A file attachment descriptor used when submitting leave requests.
- * Storage paths are resolved server-side; the client only provides metadata.
+ * Storage paths are resolved during submission; browser callers may provide the
+ * original File so provider implementations can upload it before sending.
  */
 export interface FileAttachmentInput {
   fileName: string;
   fileType?: string | null;
   fileSize?: number | null;
   storagePath?: string | null;
+  file?: File | null;
 }
 
 /**

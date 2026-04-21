@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { getPaginationSummary, shouldShowPagination } from "@/lib/pagination";
 
 interface PaginatedListControlsProps {
   page: number;
@@ -18,14 +19,21 @@ export function PaginatedListControls({
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const hasPrevious = page > 1;
   const hasNext = page < totalPages;
-  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
-  const to = Math.min(page * pageSize, total);
+
+  if (!shouldShowPagination(total, pageSize)) {
+    return (
+      <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+        {getPaginationSummary(page, pageSize, total)}
+      </div>
+    );
+  }
 
   return (
-    <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-      <span>
-        {total === 0 ? "Sem resultados" : `${from}-${to} de ${total}`}
-      </span>
+    <div
+      className="mt-3 flex flex-col gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between"
+      aria-label="Paginação"
+    >
+      <span>{getPaginationSummary(page, pageSize, total)}</span>
       <div className="flex items-center gap-2">
         <Button
           type="button"
@@ -37,7 +45,7 @@ export function PaginatedListControls({
         >
           Anterior
         </Button>
-        <span>
+        <span aria-live="polite">
           Página {page} / {totalPages}
         </span>
         <Button

@@ -12,8 +12,9 @@
  * the notification abstraction service.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
+import { useLocation } from "react-router-dom";
 import { getErrorMessage } from "@/lib/getErrorMessage";
 import type { LeaveRequest, Shift } from "@/types/domain";
 import type { BackendServices } from "@/services/backend/types";
@@ -23,7 +24,7 @@ import {
 } from "@/features/leave/services/leave-workflow";
 import { syncLeaveToCalendar } from "@/features/leave/services/leave-calendar-sync";
 import { dispatchLeaveStatusChange } from "@/features/notifications/notification-service";
-import { toast } from "sonner";
+import { appToast as toast } from "@/lib/app-toast";
 import { LeaveRequestForm } from "@/components/leave/LeaveRequestForm";
 import { LeaveRequestList } from "@/components/leave/LeaveRequestList";
 import {
@@ -50,6 +51,8 @@ import type {
   LeaveApproveInput,
   LeaveRejectInput,
 } from "@/components/leave/LeaveRequestCard";
+import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
+import { readNotificationEntityFromSearch } from "@/features/notifications/notification-routing";
 
 interface LeaveScreenProps {
   userId: string;
@@ -75,9 +78,10 @@ export function LeaveScreen({
   accessToken,
   defaultCalendarId,
 }: LeaveScreenProps) {
+  const location = useLocation();
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
   const [requestsPage, setRequestsPage] = useState(1);
-  const [requestsPageSize] = useState(10);
+  const [requestsPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [requestsTotal, setRequestsTotal] = useState(0);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,6 +89,17 @@ export function LeaveScreen({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<LeaveRequest | null>(null);
+  const [focusedRequest, setFocusedRequest] = useState<LeaveRequest | null>(
+    null,
+  );
+  const notificationTarget = useMemo(
+    () => readNotificationEntityFromSearch(location.search),
+    [location.search],
+  );
+  const focusedRequestId =
+    notificationTarget.entityType === "leave_request"
+      ? notificationTarget.entityId
+      : null;
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -110,6 +125,43 @@ export function LeaveScreen({
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!focusedRequestId) {
+      setFocusedRequest(null);
+      return;
+    }
+
+    const existing = requests.find(
+      (request) => request.id === focusedRequestId,
+    );
+    if (existing) {
+      setFocusedRequest(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadFocusedRequest = async () => {
+      try {
+        const request =
+          await backend.leave.getLeaveRequestById(focusedRequestId);
+        if (!cancelled) {
+          setFocusedRequest(request);
+        }
+      } catch {
+        if (!cancelled) {
+          setFocusedRequest(null);
+        }
+      }
+    };
+
+    void loadFocusedRequest();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [backend.leave, focusedRequestId, requests]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -141,11 +193,17 @@ export function LeaveScreen({
 
   function handleCreated(leave: LeaveRequest) {
     setRequests((prev) => [leave, ...prev]);
+    if (focusedRequest?.id === leave.id) {
+      setFocusedRequest(leave);
+    }
     toast.success(feedbackMessages.leaveSavedDraft);
   }
 
   async function handleSentToHR(leave: LeaveRequest) {
     setRequests((prev) => prev.map((r) => (r.id === leave.id ? leave : r)));
+    if (focusedRequest?.id === leave.id) {
+      setFocusedRequest(leave);
+    }
     toast.success(feedbackMessages.leaveSentToHR);
     try {
       await dispatchLeaveStatusChange(backend.notifications, leave);
@@ -182,6 +240,9 @@ export function LeaveScreen({
       setRequests((prev) =>
         prev.map((r) => (r.id === updated.id ? updated : r)),
       );
+      if (focusedRequest?.id === updated.id) {
+        setFocusedRequest(updated);
+      }
       try {
         await dispatchLeaveStatusChange(backend.notifications, updated);
       } catch {
@@ -216,6 +277,9 @@ export function LeaveScreen({
       setRequests((prev) =>
         prev.map((r) => (r.id === updated.id ? updated : r)),
       );
+      if (focusedRequest?.id === updated.id) {
+        setFocusedRequest(updated);
+      }
       try {
         await dispatchLeaveStatusChange(backend.notifications, updated);
       } catch {
@@ -244,6 +308,9 @@ export function LeaveScreen({
       setRequests((prev) =>
         prev.map((r) => (r.id === updated.id ? updated : r)),
       );
+      if (focusedRequest?.id === updated.id) {
+        setFocusedRequest(updated);
+      }
     } catch {
     } finally {
       setBusyId(null);
@@ -287,6 +354,9 @@ export function LeaveScreen({
       setRequests((prev) =>
         prev.map((r) => (r.id === updated.id ? updated : r)),
       );
+      if (focusedRequest?.id === updated.id) {
+        setFocusedRequest(updated);
+      }
     } catch {
     } finally {
       setSyncingId(null);
@@ -304,6 +374,9 @@ export function LeaveScreen({
 
       setRequests((prev) => prev.filter((r) => r.id !== request.id));
       setRequestsTotal((prev) => Math.max(0, prev - 1));
+      if (focusedRequest?.id === request.id) {
+        setFocusedRequest(null);
+      }
     } catch {
       // handled by toast
     } finally {
@@ -361,16 +434,17 @@ export function LeaveScreen({
           </p>
         </div>
 
-        {loading ? (
+        {error ? (
+          <p className="text-sm text-rose-600">{error}</p>
+        ) : loading && requests.length === 0 ? (
           <div className="space-y-3">
             <LoadingState message="A carregar pedidos..." inline />
             <LoadingListSkeleton rows={3} />
           </div>
-        ) : error ? (
-          <p className="text-sm text-rose-600">{error}</p>
         ) : (
           <LeaveRequestList
             requests={requests}
+            focusedRequest={focusedRequest}
             userId={userId}
             page={requestsPage}
             pageSize={requestsPageSize}
@@ -386,6 +460,7 @@ export function LeaveScreen({
             }
             busyId={busyId}
             syncingId={syncingId}
+            focusedRequestId={focusedRequestId}
           />
         )}
       </div>

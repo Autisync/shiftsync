@@ -2,6 +2,8 @@ import { Suspense, lazy, useState, useEffect } from "react";
 import { Routes, Route, useLocation } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import { motion, AnimatePresence } from "framer-motion";
+import { AppErrorBoundary } from "@/components/app/AppErrorBoundary";
+import { AppOfflineBanner } from "@/components/app/AppOfflineBanner";
 import CookieBanner from "@/components/cookies/CookieBanner";
 import CookiePreferencesDialog from "@/components/cookies/CookiePreferencesDialog";
 import ConsentGatedAnalytics from "@/components/cookies/ConsentGatedAnalytics";
@@ -83,30 +85,38 @@ const ScrollToTopButton = () => {
 
 function App() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-autisync-surface flex items-center justify-center">
-          <LoadingState message="A carregar aplicação..." />
-        </div>
-      }
-    >
-      <>
-        <VersionUpdateBanner />
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/home/*" element={<Home />} />
-          <Route path="/privacy" element={<Privacy />} />
-          <Route path="/terms" element={<Terms />} />
-          <Route path="/datadeletion" element={<DataDeletion />} />
-          <Route path="/cookies" element={<Cookies />} />
-        </Routes>
-        <Toaster position="top-right" richColors />
-        <CookieBanner />
-        <CookiePreferencesDialog />
-        <ConsentGatedAnalytics />
-        <ScrollToTopButton />
-      </>
-    </Suspense>
+    <AppErrorBoundary>
+      <Suspense
+        fallback={
+          <div className="min-h-screen bg-autisync-surface flex items-center justify-center">
+            <LoadingState message="A carregar aplicação..." />
+          </div>
+        }
+      >
+        <>
+          <AppOfflineBanner />
+          <VersionUpdateBanner />
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/home/*" element={<Home />} />
+            <Route path="/privacy" element={<Privacy />} />
+            <Route path="/terms" element={<Terms />} />
+            <Route path="/datadeletion" element={<DataDeletion />} />
+            <Route path="/cookies" element={<Cookies />} />
+          </Routes>
+          <Toaster
+            position="top-right"
+            richColors
+            closeButton
+            visibleToasts={5}
+          />
+          <CookieBanner />
+          <CookiePreferencesDialog />
+          <ConsentGatedAnalytics />
+          <ScrollToTopButton />
+        </>
+      </Suspense>
+    </AppErrorBoundary>
   );
 }
 

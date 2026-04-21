@@ -30,7 +30,6 @@ import {
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { getErrorMessage } from "@/lib/getErrorMessage";
-import { toast } from "sonner";
 import type { CalendarSyncPreviewChange } from "@/features/calendar/types";
 import type { ConstraintViolation } from "@/features/swaps/services/swap-constraints";
 import { LoadingState } from "@/components/ui/loading-state";

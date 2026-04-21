@@ -8,7 +8,7 @@ import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { CalendarIcon } from "lucide-react";
-import { toast } from "sonner";
+import { appToast as toast } from "@/lib/app-toast";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -28,11 +28,6 @@ import type {
   LeaveService,
   ReminderService,
 } from "@/services/backend/types";
-import {
-  generateGmailComposeLink,
-  generateMailtoLink,
-  generateOutlookComposeLink,
-} from "@/lib/swap-email-template";
 import { AlertTriangle, Mail, Save } from "lucide-react";
 import {
   Dialog,
@@ -58,37 +53,7 @@ interface LeaveRequestFormProps {
 }
 
 const NOTICE_POLICY_DAYS = 45;
-
-interface LeaveComposeLinks {
-  to: string;
-  cc: string;
-  mailto: string;
-  gmailCompose: string;
-  outlookCompose: string;
-}
-
-function buildComposeLinks(preview: EmailPreviewPayload): LeaveComposeLinks {
-  const to = preview.to.join(",");
-  const cc = preview.cc.join(",");
-
-  return {
-    to,
-    cc,
-    mailto: generateMailtoLink(preview.subject, preview.body, to, cc),
-    gmailCompose: generateGmailComposeLink(
-      preview.subject,
-      preview.body,
-      to,
-      cc,
-    ),
-    outlookCompose: generateOutlookComposeLink(
-      preview.subject,
-      preview.body,
-      to,
-      cc,
-    ),
-  };
-}
+const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 
 function daysUntil(dateIso: string): number {
   const start = new Date(`${dateIso}T00:00:00`).getTime();
@@ -147,8 +112,6 @@ export function LeaveRequestForm({
   const [preview, setPreview] = useState<EmailPreviewPayload | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
 
-  const composeLinks = preview ? buildComposeLinks(preview) : null;
-
   const isSpotRequest = type === "personal";
   const noticeDays = daysUntil(effectiveStart);
   const insideNoticeWindow = isSpotRequest && noticeDays < NOTICE_POLICY_DAYS;
@@ -162,8 +125,11 @@ export function LeaveRequestForm({
     if (!effectiveStart || !effectiveEnd) return false;
     if (effectiveStart > effectiveEnd) return false;
     if (!isVacation && attachments.length === 0) return false;
+    if (attachments.some((file) => file.size > MAX_ATTACHMENT_SIZE_BYTES)) {
+      return false;
+    }
     return true;
-  }, [attachments.length, effectiveEnd, effectiveStart, isVacation]);
+  }, [attachments, effectiveEnd, effectiveStart, isVacation]);
 
   async function handleSaveAndPreview(e: React.FormEvent) {
     e.preventDefault();
@@ -171,9 +137,11 @@ export function LeaveRequestForm({
 
     if (!canSubmit) {
       setError(
-        !isVacation && attachments.length === 0
-          ? "Anexe pelo menos um ficheiro para este tipo de ausência."
-          : "Preencha corretamente as datas do pedido.",
+        attachments.some((file) => file.size > MAX_ATTACHMENT_SIZE_BYTES)
+          ? "Cada anexo deve ter no máximo 10 MB."
+          : !isVacation && attachments.length === 0
+            ? "Anexe pelo menos um ficheiro para este tipo de ausência."
+            : "Preencha corretamente as datas do pedido.",
       );
       return;
     }
@@ -205,6 +173,7 @@ export function LeaveRequestForm({
           fileType: file.type || null,
           fileSize: file.size,
           storagePath: null,
+          file,
         })),
       });
 
@@ -242,12 +211,6 @@ export function LeaveRequestForm({
     setConfirming(true);
 
     try {
-      if (composeLinks) {
-        // Trigger user's own email client using mailto before persisting the
-        // "sent to HR" state, so submission always opens an outbound draft.
-        window.location.href = composeLinks.mailto;
-      }
-
       const updated = await leaveService.confirmLeaveSubmission({
         leaveRequestId: draft.id,
         emailPreview: preview,
@@ -256,6 +219,7 @@ export function LeaveRequestForm({
           fileType: file.type || null,
           fileSize: file.size,
           storagePath: null,
+          file,
         })),
       });
 
@@ -269,9 +233,7 @@ export function LeaveRequestForm({
       setVacationRange(undefined);
       setNotes("");
       setAttachments([]);
-      toast.success(
-        "Rascunho de email aberto no seu cliente e pedido enviado ao RH.",
-      );
+      toast.success("Pedido enviado ao RH com os anexos incluídos.");
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -430,9 +392,20 @@ export function LeaveRequestForm({
                 id="leave-attachment"
                 type="file"
                 multiple
-                onChange={(e) =>
-                  setAttachments(Array.from(e.target.files ?? []))
-                }
+                onChange={(e) => {
+                  const selectedFiles = Array.from(e.target.files ?? []);
+                  const hasOversized = selectedFiles.some(
+                    (file) => file.size > MAX_ATTACHMENT_SIZE_BYTES,
+                  );
+
+                  setAttachments(selectedFiles);
+
+                  if (hasOversized) {
+                    setError("Cada anexo deve ter no máximo 10 MB.");
+                  } else {
+                    setError(null);
+                  }
+                }}
                 className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
               />
               <p className="mt-1 text-xs text-slate-500">
@@ -505,7 +478,7 @@ export function LeaveRequestForm({
           <DialogHeader>
             <DialogTitle>Pré-visualização do Email</DialogTitle>
             <DialogDescription>
-              Confirme o conteúdo exato e envie pelo seu próprio email.
+              Confirme o conteúdo exato antes de enviar diretamente ao RH.
             </DialogDescription>
           </DialogHeader>
 
@@ -543,33 +516,6 @@ export function LeaveRequestForm({
                   </ul>
                 )}
               </div>
-
-              {composeLinks ? (
-                <div className="min-w-0 flex flex-col sm:flex-row flex-wrap gap-2 pt-1">
-                  <a
-                    href={composeLinks.gmailCompose}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-1 sm:flex-initial inline-flex items-center justify-center sm:justify-start rounded border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-900"
-                  >
-                    Abrir Gmail
-                  </a>
-                  <a
-                    href={composeLinks.outlookCompose}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-1 sm:flex-initial inline-flex items-center justify-center sm:justify-start rounded border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-900"
-                  >
-                    Abrir Outlook
-                  </a>
-                  <a
-                    href={composeLinks.mailto}
-                    className="flex-1 sm:flex-initial inline-flex items-center justify-center sm:justify-start rounded border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-900"
-                  >
-                    Abrir app de Email
-                  </a>
-                </div>
-              ) : null}
             </div>
           ) : null}
 
@@ -595,7 +541,7 @@ export function LeaveRequestForm({
               ) : (
                 <>
                   <span className="hidden sm:inline">
-                    Confirmar e enviar pelo meu email
+                    Confirmar e enviar ao RH
                   </span>
                   <span className="sm:hidden">Confirmar</span>
                 </>

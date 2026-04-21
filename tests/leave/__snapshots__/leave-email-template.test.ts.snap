@@ -1,0 +1,25 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildLeaveEmailTemplate > matches snapshot for hr-friendly modern copy 1`] = `
+{
+  "body": "Olá RH,
+
+Existe um pedido de ausência para decisão.
+
+Resumo:
+Colaborador: João Silva
+Código:      EMP-42
+- Tipo: Férias
+- Período: 01/06/2026 até 07/06/2026
+- Duração: 7 dias
+- Observações: Férias de verão com deslocação familiar.
+
+Data do pedido: terça-feira, 21 de abril de 2026
+
+Por favor, valide este pedido no ShiftSync.
+
+ShiftSync",
+  "mailtoPrefix": "mailto:hr%40example.com?subject=%5BShiftSync%5D%20A%C3%A7%C3%A3o%20RH%3A%20F%C3%A9rias%20%2801%2F06%2F2026%20a%2007%2F06%2F2026%29",
+  "subject": "[ShiftSync] Ação RH: Férias (01/06/2026 a 07/06/2026)",
+}
+`;

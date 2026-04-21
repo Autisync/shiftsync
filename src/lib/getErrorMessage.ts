@@ -1,9 +1,7 @@
+import { getDebugErrorMessage, toUserFacingError } from "@/lib/app-error";
+
 export function getErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === "string") return err;
-  try {
-    return JSON.stringify(err);
-  } catch {
-    return "Unknown error";
-  }
+  return toUserFacingError(err);
 }
+
+export { getDebugErrorMessage };

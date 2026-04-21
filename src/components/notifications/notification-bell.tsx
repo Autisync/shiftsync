@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Bell } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,7 +11,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { NotificationService } from "@/services/backend/types";
-import type { AppNotification } from "@/types/domain";
+import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
+import { appToast } from "@/lib/app-toast";
+import { normalizeAppError } from "@/lib/app-error";
+import { resolveNotificationDestination } from "@/features/notifications/notification-routing";
+import { useNotificationFeed } from "@/features/notifications/use-notification-feed";
 
 interface NotificationBellProps {
   userId: string;
@@ -23,114 +28,86 @@ export function NotificationBell({
   notifications,
   onOpenAll,
 }: NotificationBellProps) {
-  const [items, setItems] = useState<AppNotification[]>([]);
-  const [unread, setUnread] = useState(0);
-  // Tracks notification IDs seen during this mount to suppress duplicate renders
-  const seenIdsRef = useRef<Set<string>>(new Set());
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const { items, unreadCount, error, markRead, markAllRead } =
+    useNotificationFeed({
+      userId,
+      service: notifications,
+      page: 1,
+      pageSize: DEFAULT_PAGE_SIZE,
+      activeOnly: true,
+      backfill: true,
+    });
 
-  useEffect(() => {
-    let mounted = true;
+  const unreadCountValue =
+    Number.isFinite(unreadCount) && unreadCount > 0
+      ? Math.trunc(unreadCount)
+      : 0;
+  const unreadLabel = unreadCountValue > 99 ? "99+" : String(unreadCountValue);
 
-    const runBackfill = async () => {
-      try {
-        await notifications.backfillSwapRequestNotifications(userId);
-      } catch (error) {
-        console.warn("[notifications] backfill swap requests failed", error);
-      }
-    };
+  const openNotification = async (notificationId: string) => {
+    const notification = items.find((item) => item.id === notificationId);
+    if (!notification) return;
 
-    const load = async () => {
-      const [result, unreadCount] = await Promise.all([
-        notifications.listNotifications(userId, { page: 1, pageSize: 5 }),
-        notifications.getUnreadCount(userId),
-      ]);
-      if (!mounted) return;
-
-      // Deduplicate: only update state if we received any new IDs
-      const incoming = result.items;
-      const hasNew = incoming.some((item) => !seenIdsRef.current.has(item.id));
-      if (hasNew || seenIdsRef.current.size === 0) {
-        incoming.forEach((item) => seenIdsRef.current.add(item.id));
-        setItems(incoming);
-      }
-
-      const normalizedCount =
-        Number.isFinite(unreadCount) && unreadCount >= 0
-          ? Math.trunc(unreadCount)
-          : result.items.filter((item) => !item.isRead).length;
-      setUnread(normalizedCount);
-    };
-
-    const onNotificationCreated = (event: Event) => {
-      const customEvent = event as CustomEvent<{ userId?: string }>;
-      if (customEvent.detail?.userId !== userId) {
-        return;
-      }
-      void load();
-    };
-
-    void (async () => {
-      await runBackfill();
-      await load();
-    })();
-    const timer = window.setInterval(() => void load(), 15000);
-    window.addEventListener(
-      "in-app-notification-created",
-      onNotificationCreated,
-    );
-
-    return () => {
-      mounted = false;
-      window.clearInterval(timer);
-      window.removeEventListener(
-        "in-app-notification-created",
-        onNotificationCreated,
+    try {
+      await markRead(notificationId, true);
+      const destination = resolveNotificationDestination(notification);
+      setOpen(false);
+      navigate(destination.route);
+    } catch (error) {
+      const normalized = normalizeAppError(error, { context: "notification" });
+      appToast.error(
+        {
+          title: normalized.title,
+          message: normalized.message,
+        },
+        {
+          dedupeKey: `notification-open-${notificationId}`,
+        },
       );
-    };
-  }, [notifications, userId]);
-
-  const markRead = async (notificationId: string) => {
-    await notifications.markNotificationAsRead(notificationId);
-    setItems((prev) =>
-      prev.map((item) =>
-        item.id === notificationId
-          ? { ...item, isRead: true, readAt: new Date().toISOString() }
-          : item,
-      ),
-    );
-    setUnread((prev) => Math.max(0, prev - 1));
+    }
   };
 
   const markAll = async () => {
-    await notifications.markAllNotificationsAsRead(userId);
-    const now = new Date().toISOString();
-    setItems((prev) =>
-      prev.map((item) => ({
-        ...item,
-        isRead: true,
-        readAt: item.readAt ?? now,
-      })),
-    );
-    setUnread(0);
+    try {
+      await markAllRead(true);
+      appToast.success(
+        {
+          title: "Notificações atualizadas",
+          message: "Todas as notificações ativas foram marcadas como vistas.",
+        },
+        {
+          dedupeKey: "notifications-mark-all",
+        },
+      );
+    } catch (error) {
+      const normalized = normalizeAppError(error, { context: "notification" });
+      appToast.error(
+        {
+          title: normalized.title,
+          message: normalized.message,
+        },
+        {
+          dedupeKey: "notifications-mark-all-error",
+        },
+      );
+    }
   };
 
-  const unreadCount =
-    Number.isFinite(unread) && unread > 0 ? Math.trunc(unread) : 0;
-  const unreadLabel = unreadCount > 99 ? "99+" : String(unreadCount);
-
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           variant="outline"
           size="sm"
           className="shrink-0 gap-1"
           aria-label={`Centro de notificações${
-            unreadCount > 0 ? `, ${unreadLabel} por ler` : ""
+            unreadCountValue > 0 ? `, ${unreadLabel} por ler` : ""
           }`}
         >
           <Bell className="w-3 h-3 sm:w-4 sm:h-4" />
-          {unreadCount > 0 && (
+          {unreadCountValue > 0 && (
             <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[9px] font-bold leading-none tabular-nums text-white sm:h-5 sm:min-w-5 sm:text-[10px]">
               {unreadLabel}
             </span>
@@ -140,13 +117,17 @@ export function NotificationBell({
       <DropdownMenuContent align="end" className="w-[340px] max-h-[420px]">
         <DropdownMenuLabel>Centro de notificações</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {items.length === 0 ? (
-          <DropdownMenuItem disabled>Sem notificações</DropdownMenuItem>
+        {error ? (
+          <DropdownMenuItem disabled>
+            Não foi possível carregar as notificações agora.
+          </DropdownMenuItem>
+        ) : items.length === 0 ? (
+          <DropdownMenuItem disabled>Sem notificações ativas</DropdownMenuItem>
         ) : (
           items.map((item) => (
             <DropdownMenuItem
               key={item.id}
-              onClick={() => void markRead(item.id)}
+              onClick={() => void openNotification(item.id)}
               className="flex flex-col items-start gap-1"
             >
               <span className="text-xs font-semibold text-slate-800">
@@ -163,7 +144,7 @@ export function NotificationBell({
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => void markAll()}>
-          Marcar todas como lidas
+          Marcar todas como vistas
         </DropdownMenuItem>
         <DropdownMenuItem onClick={onOpenAll}>
           Abrir centro completo

@@ -48,6 +48,7 @@ interface LeaveRequestCardProps {
   onDelete?: (request: LeaveRequest) => void;
   busy?: boolean;
   calendarSyncing?: boolean;
+  isHighlighted?: boolean;
 }
 
 export function LeaveRequestCard({
@@ -60,6 +61,7 @@ export function LeaveRequestCard({
   onDelete,
   busy = false,
   calendarSyncing = false,
+  isHighlighted = false,
 }: LeaveRequestCardProps) {
   const effective = getEffectiveLeaveDates(request);
   const duration = getLeaveDurationDays(effective.startDate, effective.endDate);
@@ -114,7 +116,13 @@ export function LeaveRequestCard({
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-[0_6px_20px_-18px_rgba(15,23,42,0.45)] space-y-2">
+    <div
+      className={`rounded-xl border bg-white p-3 shadow-[0_6px_20px_-18px_rgba(15,23,42,0.45)] space-y-2 ${
+        isHighlighted
+          ? "border-blue-300 ring-2 ring-blue-100"
+          : "border-slate-200"
+      }`}
+    >
       {/* Header */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 min-w-0">

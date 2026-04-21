@@ -23,6 +23,7 @@ import type {
   ReminderService,
   WorkflowService,
   WorkflowActionValidationResult,
+  FileAttachmentInput,
 } from "./types";
 import type {
   AuthSession,
@@ -62,7 +63,7 @@ import { GoogleCalendarService } from "@/lib/google-calendar";
 import { CalendarSyncService as Phase3CalendarSync } from "@/features/calendar/services/calendarSyncService";
 import type { CalendarSyncRecordRepository } from "@/features/calendar/types";
 import type { ShiftData } from "@/types/shift";
-import { getErrorMessage } from "@/lib/getErrorMessage";
+import { getDebugErrorMessage, getErrorMessage } from "@/lib/getErrorMessage";
 
 // Helper: throw on Supabase error
 function assertNoError<T>(result: { data: T | null; error: unknown }): T {
@@ -106,6 +107,119 @@ function toPaginatedResult<T>(input: {
 
 function getHomeRedirectUrl(): string {
   return `${window.location.origin}${import.meta.env.BASE_URL ?? "/"}home`;
+}
+
+const LEAVE_ATTACHMENTS_BUCKET = "leave-attachments";
+
+function sanitizeStorageFileName(fileName: string): string {
+  return (
+    fileName
+      .normalize("NFKD")
+      .replace(/[^a-zA-Z0-9._-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 120) || "attachment"
+  );
+}
+
+function explainLeaveAttachmentUploadError(error: unknown): string {
+  const debug = getDebugErrorMessage(error).toLowerCase();
+
+  if (debug.includes("bucket") && debug.includes("not found")) {
+    return "Upload indisponível: o bucket 'leave-attachments' não existe no projeto Supabase.";
+  }
+
+  if (debug.includes("row-level security") || debug.includes("permission")) {
+    return "Upload bloqueado por permissões. Aplique as policies de storage para o bucket 'leave-attachments'.";
+  }
+
+  if (
+    debug.includes("maximum allowed size") ||
+    debug.includes("file too large") ||
+    debug.includes("payload too large")
+  ) {
+    return "O ficheiro excede o tamanho máximo permitido para anexos (10 MB).";
+  }
+
+  return `Falha no upload do anexo: ${getErrorMessage(error)}`;
+}
+
+async function uploadLeaveAttachmentFiles(
+  supabase: NonNullable<ReturnType<typeof getSupabaseClient>>,
+  leaveRequestId: string,
+  attachments: FileAttachmentInput[] | undefined,
+): Promise<{
+  actorUserId: string;
+  attachments: Array<{
+    fileName: string;
+    fileType: string | null;
+    fileSize: number | null;
+    storagePath: string;
+  }>;
+}> {
+  const { data, error } = await supabase.auth.getUser();
+  if (error) {
+    throw new Error(getErrorMessage(error));
+  }
+
+  const actorUserId = data.user?.id;
+  if (!actorUserId) {
+    throw new Error("Sessão inválida para enviar anexos ao RH.");
+  }
+
+  const resolvedAttachments: Array<{
+    fileName: string;
+    fileType: string | null;
+    fileSize: number | null;
+    storagePath: string;
+  }> = [];
+
+  for (const item of attachments ?? []) {
+    if (item.storagePath) {
+      resolvedAttachments.push({
+        fileName: item.fileName,
+        fileType: item.fileType ?? null,
+        fileSize: item.fileSize ?? null,
+        storagePath: item.storagePath,
+      });
+      continue;
+    }
+
+    if (!(item.file instanceof File)) {
+      throw new Error(
+        `O anexo ${item.fileName} não contém um ficheiro válido.`,
+      );
+    }
+
+    const storagePath = [
+      actorUserId,
+      leaveRequestId,
+      `${crypto.randomUUID()}-${sanitizeStorageFileName(item.fileName)}`,
+    ].join("/");
+
+    const { error: uploadError } = await supabase.storage
+      .from(LEAVE_ATTACHMENTS_BUCKET)
+      .upload(storagePath, item.file, {
+        contentType: item.file.type || item.fileType || undefined,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      throw new Error(explainLeaveAttachmentUploadError(uploadError));
+    }
+
+    resolvedAttachments.push({
+      fileName: item.fileName,
+      fileType: item.fileType ?? item.file.type ?? null,
+      fileSize: item.fileSize ?? item.file.size ?? null,
+      storagePath,
+    });
+  }
+
+  return {
+    actorUserId,
+    attachments: resolvedAttachments,
+  };
 }
 
 function isUuid(value: string | null | undefined): boolean {
@@ -176,6 +290,131 @@ async function extractInvokeErrorMessage(error: unknown): Promise<string> {
   }
 }
 
+function extractPostgrestErrorMessage(error: unknown): string {
+  if (!error || typeof error !== "object") {
+    return getErrorMessage(error);
+  }
+
+  const maybe = error as {
+    message?: unknown;
+    details?: unknown;
+    hint?: unknown;
+    code?: unknown;
+  };
+
+  const parts = [maybe.message, maybe.details, maybe.hint]
+    .filter((value) => value !== undefined && value !== null)
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+
+  if (parts.length > 0) {
+    return parts.join(" | ");
+  }
+
+  if (maybe.code !== undefined && maybe.code !== null) {
+    return String(maybe.code);
+  }
+
+  return getErrorMessage(error);
+}
+
+function mapApplySwapRpcMessage(message: string): string {
+  const normalized = message.toLowerCase();
+
+  const formatConflictWindow = (input: string): string | null => {
+    const startMatch = input.match(/starts_at=([^,\)]+)/i);
+    const endMatch = input.match(/ends_at=([^,\)]+)/i);
+
+    if (!startMatch?.[1] || !endMatch?.[1]) {
+      return null;
+    }
+
+    const start = new Date(startMatch[1].trim());
+    const end = new Date(endMatch[1].trim());
+
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      return null;
+    }
+
+    const day = start.toLocaleDateString("pt-PT", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+    const from = start.toLocaleTimeString("pt-PT", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    const to = end.toLocaleTimeString("pt-PT", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+
+    return `${day}, ${from}-${to}`;
+  };
+
+  if (normalized.includes("swap request not found")) {
+    return "Pedido de troca não encontrado.";
+  }
+
+  if (normalized.includes("not authenticated")) {
+    return "Sessão expirada. Inicie sessão novamente.";
+  }
+
+  if (normalized.includes("not authorized to apply this swap")) {
+    return "Não tem permissão para aplicar esta troca.";
+  }
+
+  if (normalized.includes("swap must be ready before applying")) {
+    return "A troca ainda não está pronta para aplicar.";
+  }
+
+  if (normalized.includes("target shift is required to apply swap")) {
+    return "Turno de destino em falta para concluir a troca.";
+  }
+
+  if (normalized.includes("requester shift not found")) {
+    return "Turno do requisitante não encontrado.";
+  }
+
+  if (normalized.includes("target shift not found")) {
+    return "Turno de destino não encontrado.";
+  }
+
+  if (
+    normalized.includes(
+      "swap cannot be applied: target user already has a shift in requester slot",
+    )
+  ) {
+    const windowText = formatConflictWindow(message);
+    return windowText
+      ? `Conflito de horários: a outra pessoa já tem um turno nesse período (${windowText}).`
+      : "Conflito de horários: a outra pessoa já tem um turno nesse período.";
+  }
+
+  if (
+    normalized.includes(
+      "swap cannot be applied: requester already has a shift in target slot",
+    )
+  ) {
+    const windowText = formatConflictWindow(message);
+    return windowText
+      ? `Conflito de horários: já tem um turno nesse período (${windowText}).`
+      : "Conflito de horários: já tem um turno nesse período.";
+  }
+
+  if (
+    normalized.includes("swap cannot be applied: shift ownership changed") ||
+    normalized.includes("shift ownership changed since approval")
+  ) {
+    return "Os turnos mudaram desde a aprovação. Atualize os pedidos e tente novamente.";
+  }
+
+  return message;
+}
+
 async function getEdgeInvokeAuthHeaders(
   supabase: NonNullable<ReturnType<typeof getSupabaseClient>>,
 ): Promise<Record<string, string>> {
@@ -218,7 +457,7 @@ async function createInAppNotification(input: {
   });
 
   if (error) {
-    console.warn("[notifications] create failed", getErrorMessage(error));
+    console.warn("[notifications] create failed", getDebugErrorMessage(error));
     return;
   }
 
@@ -227,6 +466,54 @@ async function createInAppNotification(input: {
       new CustomEvent("in-app-notification-created", {
         detail: { userId: input.userId },
       }),
+    );
+  }
+}
+
+async function sendRequestReminderEmail(input: {
+  requestType: "swap_request" | "leave_request";
+  requestId: string;
+  recipientUserId: string;
+  reason:
+    | "request_created"
+    | "awaiting_peer_decision"
+    | "submitted_to_hr"
+    | "awaiting_hr_decision"
+    | "status_update";
+  actorUserId?: string;
+}): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return;
+
+  try {
+    const authHeaders = await getEdgeInvokeAuthHeaders(supabase);
+    const { error } = await supabase.functions.invoke(
+      "send-request-reminder-email",
+      {
+        headers: authHeaders,
+        body: {
+          request_type: input.requestType,
+          request_id: input.requestId,
+          recipient_user_id: input.recipientUserId,
+          reason: input.reason,
+          actor_user_id: input.actorUserId ?? null,
+        },
+      },
+    );
+
+    if (error) {
+      const message = await extractInvokeErrorMessage(error);
+      console.warn(
+        "[reminders] send-request-reminder-email failed",
+        input,
+        message,
+      );
+    }
+  } catch (error) {
+    console.warn(
+      "[reminders] send-request-reminder-email failed",
+      input,
+      getDebugErrorMessage(error),
     );
   }
 }
@@ -1038,7 +1325,7 @@ const supabaseUploads: UploadService = {
   ): Promise<PaginatedResult<ScheduleUpload>> {
     const supabase = getSupabaseClient();
     if (!supabase) {
-      return toPaginatedResult({ items: [], page: 1, pageSize: 10, total: 0 });
+      return toPaginatedResult({ items: [], page: 1, pageSize: 5, total: 0 });
     }
 
     const { page, pageSize } = normalizeQuery(query);
@@ -1068,7 +1355,7 @@ const supabaseUploads: UploadService = {
   ): Promise<PaginatedResult<UploadTrustAssessment>> {
     const supabase = getSupabaseClient();
     if (!supabase) {
-      return toPaginatedResult({ items: [], page: 1, pageSize: 10, total: 0 });
+      return toPaginatedResult({ items: [], page: 1, pageSize: 5, total: 0 });
     }
 
     const { page, pageSize } = normalizeQuery(query);
@@ -1454,9 +1741,35 @@ const supabaseSwaps: SwapService = {
         entityType: "swap_request",
         entityId: createdRequest.id,
       }),
+      sendRequestReminderEmail({
+        requestType: "swap_request",
+        requestId: createdRequest.id,
+        recipientUserId: input.targetUserId,
+        reason: "awaiting_peer_decision",
+        actorUserId: input.requesterUserId,
+      }),
+      sendRequestReminderEmail({
+        requestType: "swap_request",
+        requestId: createdRequest.id,
+        recipientUserId: input.requesterUserId,
+        reason: "request_created",
+        actorUserId: input.requesterUserId,
+      }),
     ]);
 
     return createdRequest;
+  },
+
+  async getSwapRequestById(id: string): Promise<SwapRequest | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+    const { data, error } = await supabase
+      .from("swap_requests")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw error;
+    return data ? toSwapRequest(data) : null;
   },
 
   async getSwapRequestsForUser(userId: string): Promise<SwapRequest[]> {
@@ -1477,7 +1790,7 @@ const supabaseSwaps: SwapService = {
   ): Promise<PaginatedResult<SwapRequest>> {
     const supabase = getSupabaseClient();
     if (!supabase) {
-      return toPaginatedResult({ items: [], page: 1, pageSize: 10, total: 0 });
+      return toPaginatedResult({ items: [], page: 1, pageSize: 5, total: 0 });
     }
 
     const { page, pageSize } = normalizeQuery(query);
@@ -1670,7 +1983,7 @@ const supabaseSwaps: SwapService = {
         userId: String(existing.requester_user_id),
         type: "swap_request",
         title: "Pedido de troca aceite",
-        body: "O pedido foi aceite. Use o envio manual para notificar o RH.",
+        body: "O pedido foi aceite. Pode agora enviá-lo ao RH.",
         entityType: "swap_request",
         entityId: requestId,
       }),
@@ -1678,13 +1991,126 @@ const supabaseSwaps: SwapService = {
         userId: String(existing.target_user_id),
         type: "swap_request",
         title: "Pedido de troca aceite",
-        body: "Pedido aceite. Envie o email manual ao RH a partir do preview.",
+        body: "Pedido aceite. Aguarda envio ao RH.",
         entityType: "swap_request",
         entityId: requestId,
       }),
     ]);
 
     return updatedRequest;
+  },
+
+  async sendHREmail(
+    requestId: string,
+    actorUserId?: string,
+  ): Promise<SwapRequest> {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const actor = actorUserId ?? null;
+
+    const { data: requestData, error: requestError } = await supabase
+      .from("swap_requests")
+      .select("*")
+      .eq("id", requestId)
+      .single();
+    const requestRow = assertNoError({
+      data: requestData,
+      error: requestError,
+    });
+
+    if (
+      actor &&
+      actor !== requestRow.requester_user_id &&
+      actor !== requestRow.target_user_id
+    ) {
+      throw new Error("Apenas participantes da troca podem enviar para RH.");
+    }
+
+    const requesterSettings = await supabaseSwaps.getHRSettings(
+      String(requestRow.requester_user_id),
+    );
+    const targetSettings = await supabaseSwaps.getHRSettings(
+      String(requestRow.target_user_id),
+    );
+
+    const hrEmail = requesterSettings?.hrEmail || targetSettings?.hrEmail || "";
+    const ccEmails =
+      requesterSettings?.ccEmails ?? targetSettings?.ccEmails ?? [];
+
+    if (!hrEmail) {
+      throw new Error(
+        "Email do RH não configurado. Atualize as configurações de RH antes de enviar.",
+      );
+    }
+
+    const decisionLinks = await supabaseSwaps.createHrDecisionLinks({
+      requestId,
+      actorUserId: actor ?? undefined,
+      baseUrl: `${window.location.origin}${import.meta.env.BASE_URL ?? "/"}`,
+      expiresInHours: 24,
+    });
+
+    const authHeaders = await getEdgeInvokeAuthHeaders(supabase);
+    const { error: sendError } = await supabase.functions.invoke(
+      "send-swap-hr-email",
+      {
+        headers: authHeaders,
+        body: {
+          request_id: requestId,
+          actor_user_id: actor,
+          hr_email: hrEmail,
+          cc_emails: ccEmails,
+          approve_url: decisionLinks.approveUrl,
+          decline_url: decisionLinks.declineUrl,
+          expires_at: decisionLinks.expiresAt,
+        },
+      },
+    );
+
+    if (sendError) {
+      throw new Error(await extractInvokeErrorMessage(sendError));
+    }
+
+    const updated = await supabaseSwaps.markHREmailSent(
+      requestId,
+      actor ?? undefined,
+    );
+
+    await Promise.all([
+      createInAppNotification({
+        userId: String(requestRow.requester_user_id),
+        type: "swap_request",
+        title: "Pedido enviado ao RH",
+        body: "O email foi enviado ao RH e foi enviada uma cópia para o utilizador que fez o envio.",
+        entityType: "swap_request",
+        entityId: requestId,
+      }),
+      createInAppNotification({
+        userId: String(requestRow.target_user_id),
+        type: "swap_request",
+        title: "Pedido enviado ao RH",
+        body: "O pedido foi enviado ao RH e aguarda decisão.",
+        entityType: "swap_request",
+        entityId: requestId,
+      }),
+      sendRequestReminderEmail({
+        requestType: "swap_request",
+        requestId,
+        recipientUserId: String(requestRow.requester_user_id),
+        reason: "submitted_to_hr",
+        actorUserId: actor ?? undefined,
+      }),
+      sendRequestReminderEmail({
+        requestType: "swap_request",
+        requestId,
+        recipientUserId: String(requestRow.target_user_id),
+        reason: "awaiting_hr_decision",
+        actorUserId: actor ?? undefined,
+      }),
+    ]);
+
+    return updated;
   },
 
   async markHREmailSent(
@@ -1948,7 +2374,8 @@ const supabaseSwaps: SwapService = {
           "Atualizacao de calendario indisponivel: execute as migracoes mais recentes.",
         );
       }
-      throw new Error(getErrorMessage(rpcError));
+      const rawMessage = extractPostgrestErrorMessage(rpcError);
+      throw new Error(mapApplySwapRpcMessage(rawMessage));
     }
 
     // Remove stale tracking records for both swapped shifts so the next
@@ -2067,6 +2494,18 @@ const supabaseLeave: LeaveService = {
     return toLeaveRequest(assertNoError({ data, error }));
   },
 
+  async getLeaveRequestById(id: string): Promise<LeaveRequest | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+    const { data, error } = await supabase
+      .from("leave_requests")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw error;
+    return data ? toLeaveRequest(data) : null;
+  },
+
   async getLeaveRequestsForUser(userId: string): Promise<LeaveRequest[]> {
     const supabase = getSupabaseClient();
     if (!supabase) return [];
@@ -2085,7 +2524,7 @@ const supabaseLeave: LeaveService = {
   ): Promise<PaginatedResult<LeaveRequest>> {
     const supabase = getSupabaseClient();
     if (!supabase) {
-      return toPaginatedResult({ items: [], page: 1, pageSize: 10, total: 0 });
+      return toPaginatedResult({ items: [], page: 1, pageSize: 5, total: 0 });
     }
 
     const { page, pageSize } = normalizeQuery(query);
@@ -2153,30 +2592,34 @@ const supabaseLeave: LeaveService = {
     if (
       !decisionLinks?.approve_url ||
       !decisionLinks?.decline_url ||
-      !decisionLinks?.adjust_url ||
       !decisionLinks?.expires_at
     ) {
       throw new Error("Falha ao gerar links seguros de decisão para ausência.");
     }
 
-    const subject = `[ShiftSync] Pedido de ${leave.type} (${leave.startDate} a ${leave.endDate})`;
+    const subject = `[ShiftSync] Ação RH: pedido de ${leave.type} (${leave.startDate} a ${leave.endDate})`;
     const lines = [
-      "Bom dia RH,",
+      "Olá RH,",
       "",
-      "Segue pedido de ausência para análise:",
-      `Colaborador: ${input.employeeName ?? "N/D"} (${input.employeeCode ?? "N/D"})`,
-      `Tipo: ${leave.type}`,
-      `Início: ${leave.startDate}`,
-      `Fim: ${leave.endDate}`,
-      `Observações: ${leave.notes ?? "-"}`,
+      "Existe um novo pedido de ausência para decisão.",
       "",
-      "Ações rápidas RH (link seguro de uso único):",
-      `Aprovar: ${decisionLinks.approve_url}`,
-      `Recusar: ${decisionLinks.decline_url}`,
-      `Solicitar ajustes: ${decisionLinks.adjust_url}`,
-      `Validade: ${decisionLinks.expires_at}`,
+      "Resumo do pedido:",
+      `- Pedido por: ${input.employeeName ?? "N/D"} (${input.employeeCode ?? "N/D"})`,
+      `- Tipo: ${leave.type}`,
+      `- Período: ${leave.startDate} até ${leave.endDate}`,
+      `- Alteração solicitada: atualização do planeamento de ausências para o período acima.`,
+      `- Observações: ${leave.notes ?? "Sem observações"}`,
+      `- Pedido: ${leave.id}`,
       "",
-      "Obrigado.",
+      "Ações rápidas RH (link seguro e de uso único):",
+      `- Aprovar: ${decisionLinks.approve_url}`,
+      `- Recusar: ${decisionLinks.decline_url}`,
+      `- Ajustar datas: ${decisionLinks.adjust_url ?? "N/D"}`,
+      `- Validade: ${decisionLinks.expires_at}`,
+      "",
+      "Após a decisão, os intervenientes serão notificados automaticamente.",
+      "",
+      "ShiftSync",
     ];
 
     return {
@@ -2288,10 +2731,43 @@ const supabaseLeave: LeaveService = {
     const supabase = getSupabaseClient();
     if (!supabase) throw new Error("Supabase client unavailable");
 
-    if (input.attachments?.length) {
-      await (supabase as any).from("leave_request_attachments").insert(
-        input.attachments.map((file) => ({
+    const toEmail = input.emailPreview.to[0] ?? null;
+    if (!toEmail) {
+      throw new Error("Email do RH em falta para concluir o envio.");
+    }
+
+    const authHeaders = await getEdgeInvokeAuthHeaders(supabase);
+    const uploadedAttachments = await uploadLeaveAttachmentFiles(
+      supabase,
+      input.leaveRequestId,
+      input.attachments,
+    );
+
+    const { error: sendError } = await supabase.functions.invoke(
+      "send-leave-hr-email",
+      {
+        headers: authHeaders,
+        body: {
           leave_request_id: input.leaveRequestId,
+          actor_user_id: uploadedAttachments.actorUserId,
+          hr_email: toEmail,
+          cc_emails: input.emailPreview.cc,
+          subject: input.emailPreview.subject,
+          body: input.emailPreview.body,
+          attachments: uploadedAttachments.attachments,
+        },
+      },
+    );
+
+    if (sendError) {
+      throw new Error(await extractInvokeErrorMessage(sendError));
+    }
+
+    if (uploadedAttachments.attachments.length) {
+      await (supabase as any).from("leave_request_attachments").insert(
+        uploadedAttachments.attachments.map((file) => ({
+          leave_request_id: input.leaveRequestId,
+          user_id: uploadedAttachments.actorUserId,
           file_name: file.fileName,
           file_type: file.fileType ?? null,
           file_size: file.fileSize ?? null,
@@ -2299,20 +2775,6 @@ const supabaseLeave: LeaveService = {
         })),
       );
     }
-
-    await (supabase as any).from("email_deliveries").insert({
-      workflow_type: "leave_request",
-      target_id: input.leaveRequestId,
-      to_email: input.emailPreview.to[0] ?? null,
-      cc_emails: input.emailPreview.cc,
-      status: "queued",
-      metadata: {
-        subject: input.emailPreview.subject,
-        body: input.emailPreview.body,
-        attachments: input.emailPreview.attachments,
-      },
-      created_at: new Date().toISOString(),
-    });
 
     const now = new Date().toISOString();
     const dueAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -2338,6 +2800,14 @@ const supabaseLeave: LeaveService = {
       body: "O pedido foi enviado ao RH e aguarda decisão.",
       entityType: "leave_request",
       entityId: updatedLeave.id,
+    });
+
+    await sendRequestReminderEmail({
+      requestType: "leave_request",
+      requestId: updatedLeave.id,
+      recipientUserId: updatedLeave.userId,
+      reason: "submitted_to_hr",
+      actorUserId: uploadedAttachments.actorUserId,
     });
 
     return updatedLeave;
@@ -2851,7 +3321,7 @@ const supabaseNotifications: NotificationService = {
   ): Promise<PaginatedResult<AppNotification>> {
     const supabase = getSupabaseClient();
     if (!supabase) {
-      return toPaginatedResult({ items: [], page: 1, pageSize: 10, total: 0 });
+      return toPaginatedResult({ items: [], page: 1, pageSize: 5, total: 0 });
     }
 
     const { page, pageSize } = normalizeQuery(query);
@@ -2875,6 +3345,8 @@ const supabaseNotifications: NotificationService = {
         title: String(row.title ?? "Notificação"),
         body: String(row.body ?? ""),
         link: (row.link as string | null) ?? null,
+        entityType: (row.entity_type as string | null) ?? null,
+        entityId: (row.entity_id as string | null) ?? null,
         meta: (row.meta as Record<string, unknown>) ?? {},
         isRead:
           typeof row.is_read === "boolean"
@@ -3090,7 +3562,7 @@ const supabaseReminders: ReminderService = {
   ): Promise<PaginatedResult<ReminderJob>> {
     const supabase = getSupabaseClient();
     if (!supabase) {
-      return toPaginatedResult({ items: [], page: 1, pageSize: 10, total: 0 });
+      return toPaginatedResult({ items: [], page: 1, pageSize: 5, total: 0 });
     }
 
     const { page, pageSize } = normalizeQuery(query);

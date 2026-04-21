@@ -5,7 +5,8 @@
  * select one to sync into swap calendar with an optional acknowledgement.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import type { ScheduleUpload, UploadTrustAssessment } from "@/types/domain";
 import type { UploadService } from "@/services/backend/types";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,8 @@ import {
   LoadingState,
   LoadingListSkeleton,
 } from "@/components/ui/loading-state";
+import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
+import { readNotificationEntityFromSearch } from "@/features/notifications/notification-routing";
 
 interface ScheduleSharePageProps {
   userId: string;
@@ -56,12 +59,13 @@ export function ScheduleSharePage({
   accessToken,
   defaultCalendarId,
 }: ScheduleSharePageProps) {
+  const location = useLocation();
   const [uploads, setUploads] = useState<ScheduleUpload[]>([]);
   const [assessments, setAssessments] = useState<
     Record<string, UploadTrustAssessment>
   >({});
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(10);
+  const [pageSize] = useState(DEFAULT_PAGE_SIZE);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,10 +73,31 @@ export function ScheduleSharePage({
   const [acknowledged, setAcknowledged] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncDone, setSyncDone] = useState(false);
+  const [focusedUpload, setFocusedUpload] = useState<ScheduleUpload | null>(
+    null,
+  );
+  // Track the last focusedUploadId we already scrolled to so periodic
+  // polling doesn't re-scroll the user away from wherever they navigated.
+  const scrolledToUploadRef = useRef<string | null>(null);
+  const notificationTarget = useMemo(
+    () => readNotificationEntityFromSearch(location.search),
+    [location.search],
+  );
+  const focusedUploadId =
+    notificationTarget.entityType === "schedule_upload"
+      ? notificationTarget.entityId
+      : null;
+
+  const isSyncSessionNotification =
+    notificationTarget.entityType === "sync_session";
+  const syncSessionMetadata = isSyncSessionNotification
+    ? (notificationTarget.metadata as Record<string, unknown> | null)
+    : null;
 
   const selectedUpload =
     selectedUploadId !== null
-      ? (uploads.find((upload) => upload.id === selectedUploadId) ?? null)
+      ? (uploads.find((upload) => upload.id === selectedUploadId) ??
+        (focusedUpload?.id === selectedUploadId ? focusedUpload : null))
       : null;
 
   useEffect(() => {
@@ -119,6 +144,120 @@ export function ScheduleSharePage({
       mounted = false;
     };
   }, [page, pageSize, service, userId]);
+
+  useEffect(() => {
+    if (!focusedUploadId) {
+      setFocusedUpload(null);
+      scrolledToUploadRef.current = null;
+      return;
+    }
+
+    // Reset guard when the focused id changes.
+    if (scrolledToUploadRef.current !== focusedUploadId) {
+      scrolledToUploadRef.current = null;
+    }
+
+    const existing = uploads.find((upload) => upload.id === focusedUploadId);
+    if (existing) {
+      setFocusedUpload(null);
+      setSelectedUploadId(focusedUploadId);
+      if (scrolledToUploadRef.current !== focusedUploadId) {
+        scrolledToUploadRef.current = focusedUploadId;
+        const frameId = window.requestAnimationFrame(() => {
+          document
+            .getElementById(`schedule-upload-row-${focusedUploadId}`)
+            ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        });
+        return () => window.cancelAnimationFrame(frameId);
+      }
+      return;
+    }
+
+    // Already fetched and scrolled to this upload — skip on data refreshes.
+    if (scrolledToUploadRef.current === focusedUploadId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadFocusedUpload = async () => {
+      try {
+        const upload = await service.getUploadById(focusedUploadId);
+        if (!upload || cancelled) {
+          if (!cancelled) {
+            setFocusedUpload(null);
+          }
+          return;
+        }
+
+        const assessment = await service
+          .getUploadTrustAssessmentByUpload(focusedUploadId)
+          .catch(() => null);
+
+        if (cancelled) {
+          return;
+        }
+
+        setFocusedUpload(upload);
+        setSelectedUploadId(upload.id);
+        scrolledToUploadRef.current = focusedUploadId;
+        if (assessment) {
+          setAssessments((prev) => ({
+            ...prev,
+            [assessment.uploadId]: assessment,
+          }));
+        }
+      } catch {
+        if (!cancelled) {
+          setFocusedUpload(null);
+        }
+      }
+    };
+
+    void loadFocusedUpload();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [focusedUploadId, service, uploads]);
+
+  // Reload first page when sync completes to show new uploads
+  // Auto-refresh on page visibility change (e.g., when returning from file upload)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && page === 1) {
+        // Reload first page when page becomes visible (user returns to tab)
+        setPage(1);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
+
+  // Periodic refresh to catch new uploads (5s interval)
+  useEffect(() => {
+    const refreshInterval = setInterval(() => {
+      if (page === 1 && !loading) {
+        // Silently refresh first page to catch new uploads
+        void (async () => {
+          try {
+            const result = await service.getUploadsByUserPaginated(userId, {
+              page: 1,
+              pageSize,
+            });
+            setUploads(result.items);
+            setTotal(result.total);
+          } catch {
+            // Silently ignore refresh errors
+          }
+        })();
+      }
+    }, 5000); // Refresh every 5 seconds
+
+    return () => clearInterval(refreshInterval);
+  }, [page, pageSize, service, userId, loading]);
 
   const handleSyncSelected = async () => {
     const calendarId = defaultCalendarId;
@@ -178,10 +317,89 @@ export function ScheduleSharePage({
         </p>
       ) : null}
 
+      {isSyncSessionNotification && syncSessionMetadata ? (
+        <div className="rounded-md border border-blue-200 bg-blue-50 p-3 space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-blue-900">
+            Estado da Sincronização
+          </h3>
+          <p className="text-xs text-blue-800">
+            {typeof syncSessionMetadata.status === "string" && (
+              <>
+                <span className="font-medium">Status:</span>{" "}
+                {syncSessionMetadata.status === "syncing"
+                  ? "A sincronizar..."
+                  : syncSessionMetadata.status === "synced"
+                    ? "Sincronização concluída"
+                    : syncSessionMetadata.status === "failed"
+                      ? "Falha na sincronização"
+                      : syncSessionMetadata.status}
+              </>
+            )}
+          </p>
+          {typeof syncSessionMetadata.uploadId === "string" && (
+            <p className="text-xs text-blue-700">
+              <span className="font-medium">Upload:</span>{" "}
+              {syncSessionMetadata.uploadId.slice(0, 8)}...
+            </p>
+          )}
+          {typeof syncSessionMetadata.message === "string" && (
+            <p className="text-xs text-blue-700">
+              {syncSessionMetadata.message}
+            </p>
+          )}
+        </div>
+      ) : null}
+
       <section className="space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
           Histórico de Uploads
         </h3>
+        {focusedUpload &&
+        !uploads.some((upload) => upload.id === focusedUpload.id) ? (
+          <div
+            id={`schedule-upload-spotlight-${focusedUpload.id}`}
+            className="rounded-md border border-blue-200 bg-blue-50/60 p-3 text-xs text-slate-700"
+          >
+            <p className="mb-2 font-semibold uppercase tracking-wide text-blue-700">
+              Upload aberto via notificação
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <p>
+                <span className="font-medium">Ficheiro:</span>{" "}
+                {String(
+                  focusedUpload.metadata?.file_name ??
+                    focusedUpload.fileHash.slice(0, 12),
+                )}
+              </p>
+              <p>
+                <span className="font-medium">Data:</span>{" "}
+                {new Date(focusedUpload.uploadedAt).toLocaleDateString("pt-PT")}
+              </p>
+              <p>
+                <span className="font-medium">Cobertura:</span>{" "}
+                {focusedUpload.normalizedCoverageStart &&
+                focusedUpload.normalizedCoverageEnd
+                  ? `${focusedUpload.normalizedCoverageStart} → ${focusedUpload.normalizedCoverageEnd}`
+                  : "N/D"}
+              </p>
+              <p>
+                <span className="font-medium">Confiança:</span>{" "}
+                {trustLabel(
+                  assessments[focusedUpload.id]?.trustLevel ??
+                    focusedUpload.trustLevel,
+                )}
+              </p>
+            </div>
+            <div className="mt-3">
+              <Button
+                size="sm"
+                onClick={() => setSelectedUploadId(focusedUpload.id)}
+              >
+                Selecionar este upload
+              </Button>
+            </div>
+          </div>
+        ) : null}
         <div className="overflow-x-auto rounded-md border border-slate-200">
           <table className="min-w-full divide-y divide-slate-200 text-xs">
             <thead className="bg-slate-50">
@@ -236,7 +454,14 @@ export function ScheduleSharePage({
                     return (
                       <tr
                         key={upload.id}
-                        className={isSelected ? "bg-slate-50" : undefined}
+                        id={`schedule-upload-row-${upload.id}`}
+                        className={
+                          focusedUploadId === upload.id
+                            ? "bg-blue-50"
+                            : isSelected
+                              ? "bg-slate-50"
+                              : undefined
+                        }
                       >
                         <td className="px-2 py-2 text-slate-600">
                           {new Date(upload.uploadedAt).toLocaleDateString(
