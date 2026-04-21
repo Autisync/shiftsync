@@ -25,7 +25,9 @@ describe("request reminder templates", () => {
     expect(template.text).toContain("Mudança de turno (por quem e para quê)");
     expect(template.text).toContain("Pedido por: Ana Costa (EMP-101)");
     expect(template.text).toContain("Com: Bruno Lima (EMP-202)");
-    expect(template.text).toContain("Turno do requerente: 10/05/2026, 07:00-15:00");
+    expect(template.text).toContain(
+      "Turno do requerente: 10/05/2026, 07:00-15:00",
+    );
     expect(template.text).toContain("Turno do colega: 10/05/2026, 12:00-20:00");
     expect(template.html).toContain("Mudança de turno (por quem e para quê)");
     expect(template.html).toContain("Ana Costa");
@@ -47,11 +49,15 @@ describe("request reminder templates", () => {
     });
 
     expect(template.subject).toContain("Lembrete de ausência");
-    expect(template.text).toContain("Alteração solicitada (por quem e para quê)");
+    expect(template.text).toContain(
+      "Alteração solicitada (por quem e para quê)",
+    );
     expect(template.text).toContain("Pedido por: João Silva (EMP-303)");
     expect(template.text).toContain("Tipo: vacation");
     expect(template.text).toContain("Período: 2026-06-01 até 2026-06-07");
-    expect(template.html).toContain("Alteração solicitada (por quem e para quê)");
+    expect(template.html).toContain(
+      "Alteração solicitada (por quem e para quê)",
+    );
     expect(template.html).toContain("João Silva");
     expect(template.html).toContain("vacation");
   });

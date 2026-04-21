@@ -74,7 +74,8 @@ function formatShiftLabel(shift: Record<string, unknown> | null): string {
       : new Date(NaN);
   const startsAt =
     typeof shift.starts_at === "string" ? new Date(shift.starts_at) : null;
-  const endsAt = typeof shift.ends_at === "string" ? new Date(shift.ends_at) : null;
+  const endsAt =
+    typeof shift.ends_at === "string" ? new Date(shift.ends_at) : null;
 
   if (
     !startsAt ||
@@ -118,7 +119,8 @@ async function resolveUserProfile(
         tableEmail ||
         userId.slice(0, 8),
       code:
-        (typeof data?.employee_code === "string" && data.employee_code.trim()) ||
+        (typeof data?.employee_code === "string" &&
+          data.employee_code.trim()) ||
         "N/D",
       email: tableEmail,
     };
@@ -139,7 +141,9 @@ async function resolveUserProfile(
   };
 }
 
-async function sendViaResend(payload: ProviderSendPayload): Promise<Record<string, unknown>> {
+async function sendViaResend(
+  payload: ProviderSendPayload,
+): Promise<Record<string, unknown>> {
   if (!RESEND_API_KEY) {
     throw new Error("RESEND_API_KEY is not configured");
   }
@@ -187,24 +191,29 @@ async function buildSwapReminder(
     throw new Error("Swap request not found");
   }
 
-  const [recipientProfile, requesterProfile, targetProfile, requesterShiftRes, targetShiftRes] =
-    await Promise.all([
-      resolveUserProfile(supabase, payload.recipient_user_id),
-      resolveUserProfile(supabase, String(requestRow.requester_user_id)),
-      resolveUserProfile(supabase, String(requestRow.target_user_id)),
-      supabase
-        .from("shifts")
-        .select("id, date, starts_at, ends_at")
-        .eq("id", requestRow.requester_shift_id)
-        .maybeSingle(),
-      requestRow.target_shift_id
-        ? supabase
-            .from("shifts")
-            .select("id, date, starts_at, ends_at")
-            .eq("id", requestRow.target_shift_id)
-            .maybeSingle()
-        : Promise.resolve({ data: null, error: null }),
-    ]);
+  const [
+    recipientProfile,
+    requesterProfile,
+    targetProfile,
+    requesterShiftRes,
+    targetShiftRes,
+  ] = await Promise.all([
+    resolveUserProfile(supabase, payload.recipient_user_id),
+    resolveUserProfile(supabase, String(requestRow.requester_user_id)),
+    resolveUserProfile(supabase, String(requestRow.target_user_id)),
+    supabase
+      .from("shifts")
+      .select("id, date, starts_at, ends_at")
+      .eq("id", requestRow.requester_shift_id)
+      .maybeSingle(),
+    requestRow.target_shift_id
+      ? supabase
+          .from("shifts")
+          .select("id, date, starts_at, ends_at")
+          .eq("id", requestRow.target_shift_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
 
   if (!recipientProfile.email) {
     throw new Error("Recipient email is unavailable");
