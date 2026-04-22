@@ -71,6 +71,10 @@ import type {
   CalendarSyncResult,
   CalendarPreviewOptions,
   CalendarPreviewResult,
+  CalendarConnectionStatus,
+  ConnectGoogleCalendarInput,
+  UpdateCalendarConnectionInput,
+  TriggerCalendarSyncInput,
 } from "@/services/contracts/calendar.dto";
 import type { LeaveNotificationPayload } from "@/services/contracts/notifications.dto";
 import type {
@@ -136,6 +140,10 @@ export type {
   CalendarSyncResult,
   CalendarPreviewOptions,
   CalendarPreviewResult,
+  CalendarConnectionStatus,
+  ConnectGoogleCalendarInput,
+  UpdateCalendarConnectionInput,
+  TriggerCalendarSyncInput,
 } from "@/services/contracts/calendar.dto";
 
 export type { LeaveNotificationPayload } from "@/services/contracts/notifications.dto";
@@ -378,6 +386,20 @@ export interface CalendarSyncService {
     summary: CalendarPreviewResult["summary"];
     changes: CalendarPreviewResult["changes"];
   }>;
+  connectGoogleCalendar(
+    userId: string,
+    input: ConnectGoogleCalendarInput,
+  ): Promise<CalendarConnectionStatus>;
+  updateConnection(
+    userId: string,
+    input: UpdateCalendarConnectionInput,
+  ): Promise<CalendarConnectionStatus>;
+  getConnectionStatus(userId: string): Promise<CalendarConnectionStatus>;
+  triggerSync(input: TriggerCalendarSyncInput): Promise<CalendarSyncResult>;
+  pullLatestGoogleChanges(input: TriggerCalendarSyncInput): Promise<{
+    updatedFromGoogle: number;
+  }>;
+  disconnectProvider(userId: string): Promise<void>;
 }
 
 // ── NotificationService ────────────────────────────────────────────────────

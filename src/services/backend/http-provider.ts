@@ -122,6 +122,13 @@ const httpCalendar: CalendarSyncService = {
   syncShifts: () => notImplemented("calendar.syncShifts"),
   runSync: () => notImplemented("calendar.runSync"),
   previewSync: () => notImplemented("calendar.previewSync"),
+  connectGoogleCalendar: () => notImplemented("calendar.connectGoogleCalendar"),
+  updateConnection: () => notImplemented("calendar.updateConnection"),
+  getConnectionStatus: () => notImplemented("calendar.getConnectionStatus"),
+  triggerSync: () => notImplemented("calendar.triggerSync"),
+  pullLatestGoogleChanges: () =>
+    notImplemented("calendar.pullLatestGoogleChanges"),
+  disconnectProvider: () => notImplemented("calendar.disconnectProvider"),
 };
 
 const httpNotifications: NotificationService = {

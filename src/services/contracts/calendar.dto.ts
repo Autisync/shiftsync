@@ -11,7 +11,7 @@ import type { ShiftData } from "@/types/shift";
  */
 export interface CalendarSyncRunOptions {
   userId: string;
-  accessToken: string;
+  accessToken?: string;
   calendarId: string;
   dateRange?: {
     start: string;
@@ -63,7 +63,7 @@ export interface CalendarSyncResult {
  */
 export interface CalendarPreviewOptions {
   userId: string;
-  accessToken: string;
+  accessToken?: string;
   calendarId: string;
   dateRange?: {
     start: string;
@@ -80,4 +80,37 @@ export interface CalendarPreviewOptions {
 export interface CalendarPreviewResult {
   summary: CalendarSyncSummary;
   changes: CalendarSyncChangeItem[];
+}
+
+export interface CalendarConnectionStatus {
+  connected: boolean;
+  provider: "google";
+  googleEmail: string | null;
+  defaultCalendarId: string | null;
+  syncEnabled: boolean;
+  tokenExpiresAt: string | null;
+  lastSyncedAt: string | null;
+  lastSyncStatus: string | null;
+  lastSyncError: string | null;
+}
+
+export interface ConnectGoogleCalendarInput {
+  code: string;
+  redirectUri: string;
+  defaultCalendarId?: string | null;
+}
+
+export interface UpdateCalendarConnectionInput {
+  defaultCalendarId?: string | null;
+  syncEnabled?: boolean;
+}
+
+export interface TriggerCalendarSyncInput {
+  userId: string;
+  calendarId: string;
+  dateRange?: {
+    start: string;
+    end: string;
+  };
+  fullResync?: boolean;
 }

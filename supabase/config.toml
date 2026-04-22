@@ -33,3 +33,9 @@ verify_jwt = false
 
 [functions."leave-hr-actions"]
 verify_jwt = false
+
+[functions."calendar-sync"]
+verify_jwt = true
+
+[functions."calendar-sync-scheduler"]
+verify_jwt = false

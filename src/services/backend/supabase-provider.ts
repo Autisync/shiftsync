@@ -671,7 +671,7 @@ function makeLocalCalendarRepository(
   };
 }
 
-async function persistShiftGoogleEventIds(input: {
+export async function persistShiftGoogleEventIds(input: {
   userId: string;
   shifts: ShiftData[];
 }): Promise<void> {
@@ -697,7 +697,6 @@ async function persistShiftGoogleEventIds(input: {
         return date.toISOString();
       })(),
       location: shift.location ?? null,
-      role: shift.notes ?? null,
       status: shift.status === "deleted" ? "deleted" : "active",
     }));
 
@@ -710,7 +709,9 @@ async function persistShiftGoogleEventIds(input: {
         starts_at: row.starts_at,
         ends_at: row.ends_at,
         location: row.location,
-        role: row.role,
+        // IMPORTANT: never map Google-derived summary/notes into business
+        // fields like `role`. `role` is app/domain-owned and must remain
+        // authoritative unless we introduce a dedicated shift title/notes column.
         status: row.status,
       })
       .eq("user_id", input.userId)
@@ -2989,6 +2990,248 @@ const supabaseLeave: LeaveService = {
 
 // ── CalendarSyncService ────────────────────────────────────────────────────
 
+async function runLocalCalendarApply(input: {
+  shifts: ShiftData[];
+  options: {
+    userId: string;
+    calendarId: string;
+    accessToken?: string;
+    dateRange?: { start: string; end: string };
+    fullResync?: boolean;
+    removeStaleEvents?: boolean;
+    preferPlatformChanges?: boolean;
+  };
+}): Promise<{
+  summary: {
+    created: number;
+    updated: number;
+    deleted: number;
+    noop: number;
+    failed: number;
+    updatedFromGoogle: number;
+  };
+  changes?: Array<{
+    type: "create" | "update" | "delete" | "noop";
+    reason: string;
+    syncShiftKey: string | null;
+    date: string | null;
+    start: string | null;
+    end: string | null;
+    title: string | null;
+    location: string | null;
+  }>;
+  syncedShifts: ShiftData[];
+  errors: Array<{ shiftId: string | null; message: string }>;
+}> {
+  if (!input.options.accessToken) {
+    throw new Error(
+      "Missing Google access token for compatibility-mode calendar sync.",
+    );
+  }
+
+  const supabase = getSupabaseClient();
+  let result: Awaited<
+    ReturnType<InstanceType<typeof Phase3CalendarSync>["apply"]>
+  >;
+
+  if (!supabase) {
+    emitCalendarSyncCompatibilityMode(true);
+    const repo = makeLocalCalendarRepository(
+      input.options.userId,
+      input.options.calendarId,
+    );
+    const service = new Phase3CalendarSync(repo);
+    result = await service.apply({
+      shifts: input.shifts,
+      accessToken: input.options.accessToken,
+      options: {
+        userId: input.options.userId,
+        provider: "google",
+        calendarId: input.options.calendarId,
+        dateRange: input.options.dateRange,
+        fullResync: input.options.fullResync,
+        removeStaleEvents: input.options.removeStaleEvents ?? true,
+        preferPlatformChanges: input.options.preferPlatformChanges,
+      },
+    });
+  } else {
+    try {
+      const service = new Phase3CalendarSync(supabaseCalendarRecords);
+      result = await service.apply({
+        shifts: input.shifts,
+        accessToken: input.options.accessToken,
+        options: {
+          userId: input.options.userId,
+          provider: "google",
+          calendarId: input.options.calendarId,
+          dateRange: input.options.dateRange,
+          fullResync: input.options.fullResync,
+          removeStaleEvents: input.options.removeStaleEvents ?? true,
+          preferPlatformChanges: input.options.preferPlatformChanges,
+        },
+      });
+      emitCalendarSyncCompatibilityMode(false);
+    } catch (err) {
+      if (!isMissingCalendarSyncRecordsTable(err)) {
+        throw err;
+      }
+
+      emitCalendarSyncCompatibilityMode(true);
+      const repo = makeLocalCalendarRepository(
+        input.options.userId,
+        input.options.calendarId,
+      );
+      const service = new Phase3CalendarSync(repo);
+      result = await service.apply({
+        shifts: input.shifts,
+        accessToken: input.options.accessToken,
+        options: {
+          userId: input.options.userId,
+          provider: "google",
+          calendarId: input.options.calendarId,
+          dateRange: input.options.dateRange,
+          fullResync: input.options.fullResync,
+          removeStaleEvents: input.options.removeStaleEvents ?? true,
+          preferPlatformChanges: input.options.preferPlatformChanges,
+        },
+      });
+    }
+  }
+
+  if (supabase) {
+    await persistShiftGoogleEventIds({
+      userId: input.options.userId,
+      shifts: result.syncedShifts,
+    });
+  }
+
+  return {
+    summary: result.summary,
+    changes: result.changes,
+    syncedShifts: result.syncedShifts,
+    errors: result.errors.map((e) => ({
+      shiftId: e.shiftId,
+      message: e.message,
+    })),
+  };
+}
+
+async function runLocalCalendarPreview(input: {
+  shifts: ShiftData[];
+  options: {
+    userId: string;
+    calendarId: string;
+    accessToken?: string;
+    dateRange?: { start: string; end: string };
+    fullResync?: boolean;
+    removeStaleEvents?: boolean;
+    preferPlatformChanges?: boolean;
+  };
+}): Promise<{
+  summary: {
+    created: number;
+    updated: number;
+    deleted: number;
+    noop: number;
+    failed: number;
+    updatedFromGoogle: number;
+  };
+  changes: Array<{
+    type: "create" | "update" | "delete" | "noop";
+    reason: string;
+    syncShiftKey: string | null;
+    date: string | null;
+    start: string | null;
+    end: string | null;
+    title: string | null;
+    location: string | null;
+  }>;
+}> {
+  if (!input.options.accessToken) {
+    throw new Error(
+      "Missing Google access token for compatibility-mode calendar preview.",
+    );
+  }
+
+  const supabase = getSupabaseClient();
+
+  if (!supabase) {
+    emitCalendarSyncCompatibilityMode(true);
+    const repo = makeLocalCalendarRepository(
+      input.options.userId,
+      input.options.calendarId,
+    );
+    const service = new Phase3CalendarSync(repo);
+    const preview = await service.preview({
+      shifts: input.shifts,
+      accessToken: input.options.accessToken,
+      options: {
+        userId: input.options.userId,
+        provider: "google",
+        calendarId: input.options.calendarId,
+        dateRange: input.options.dateRange,
+        fullResync: input.options.fullResync,
+        removeStaleEvents: input.options.removeStaleEvents ?? true,
+        preferPlatformChanges: input.options.preferPlatformChanges,
+      },
+    });
+    return {
+      summary: preview.summary,
+      changes: preview.changes,
+    };
+  }
+
+  try {
+    const service = new Phase3CalendarSync(supabaseCalendarRecords);
+    const preview = await service.preview({
+      shifts: input.shifts,
+      accessToken: input.options.accessToken,
+      options: {
+        userId: input.options.userId,
+        provider: "google",
+        calendarId: input.options.calendarId,
+        dateRange: input.options.dateRange,
+        fullResync: input.options.fullResync,
+        removeStaleEvents: input.options.removeStaleEvents ?? true,
+        preferPlatformChanges: input.options.preferPlatformChanges,
+      },
+    });
+    emitCalendarSyncCompatibilityMode(false);
+    return {
+      summary: preview.summary,
+      changes: preview.changes,
+    };
+  } catch (err) {
+    if (!isMissingCalendarSyncRecordsTable(err)) {
+      throw err;
+    }
+
+    emitCalendarSyncCompatibilityMode(true);
+    const repo = makeLocalCalendarRepository(
+      input.options.userId,
+      input.options.calendarId,
+    );
+    const service = new Phase3CalendarSync(repo);
+    const preview = await service.preview({
+      shifts: input.shifts,
+      accessToken: input.options.accessToken,
+      options: {
+        userId: input.options.userId,
+        provider: "google",
+        calendarId: input.options.calendarId,
+        dateRange: input.options.dateRange,
+        fullResync: input.options.fullResync,
+        removeStaleEvents: input.options.removeStaleEvents ?? true,
+        preferPlatformChanges: input.options.preferPlatformChanges,
+      },
+    });
+    return {
+      summary: preview.summary,
+      changes: preview.changes,
+    };
+  }
+}
+
 const supabaseCalendar: CalendarSyncService = {
   async syncShifts(
     shifts: Shift[],
@@ -3027,192 +3270,190 @@ const supabaseCalendar: CalendarSyncService = {
 
   async runSync(shifts, options) {
     const supabase = getSupabaseClient();
-
-    if (supabase) {
-      const { data: dbShifts, error: dbShiftError } = await supabase
-        .from("shifts")
-        .select("shift_uid, google_event_id, date, starts_at, ends_at")
-        .eq("user_id", options.userId)
-        .order("date", { ascending: true });
-
-      if (!dbShiftError) {
-        console.info("[CalendarSync][RunSync][DBState]", {
-          user_id: options.userId,
-          rows: (dbShifts ?? []).map((row) => ({
-            shift_uid: row.shift_uid,
-            google_event_id: row.google_event_id,
-            date: row.date,
-            start_time: row.starts_at,
-            end_time: row.ends_at,
-          })),
-        });
-      }
+    if (!supabase) {
+      return runLocalCalendarApply({
+        shifts,
+        options,
+      });
     }
 
-    let result: Awaited<
-      ReturnType<InstanceType<typeof Phase3CalendarSync>["apply"]>
-    >;
-
-    if (!supabase) {
-      emitCalendarSyncCompatibilityMode(true);
-      // No Supabase: use localStorage directly.
-      const repo = makeLocalCalendarRepository(
-        options.userId,
-        options.calendarId,
-      );
-      const service = new Phase3CalendarSync(repo);
-      result = await service.apply({
-        shifts,
-        accessToken: options.accessToken,
-        options: {
+    try {
+      const { data, error } = await supabase.functions.invoke("calendar-sync", {
+        body: {
+          action: "apply",
           userId: options.userId,
-          provider: "google",
           calendarId: options.calendarId,
           dateRange: options.dateRange,
           fullResync: options.fullResync,
-          removeStaleEvents: options.removeStaleEvents ?? true,
+          removeStaleEvents: options.removeStaleEvents,
+          shifts,
         },
       });
-    } else {
-      try {
-        const service = new Phase3CalendarSync(supabaseCalendarRecords);
-        result = await service.apply({
-          shifts,
-          accessToken: options.accessToken,
-          options: {
-            userId: options.userId,
-            provider: "google",
-            calendarId: options.calendarId,
-            dateRange: options.dateRange,
-            fullResync: options.fullResync,
-            removeStaleEvents: options.removeStaleEvents ?? true,
-            preferPlatformChanges: options.preferPlatformChanges,
-          },
-        });
-        emitCalendarSyncCompatibilityMode(false);
-      } catch (err) {
-        if (isMissingCalendarSyncRecordsTable(err)) {
-          emitCalendarSyncCompatibilityMode(true);
-          // Supabase table not yet migrated — fall back to localStorage.
-          const repo = makeLocalCalendarRepository(
-            options.userId,
-            options.calendarId,
-          );
-          const service = new Phase3CalendarSync(repo);
-          result = await service.apply({
-            shifts,
-            accessToken: options.accessToken,
-            options: {
-              userId: options.userId,
-              provider: "google",
-              calendarId: options.calendarId,
-              dateRange: options.dateRange,
-              fullResync: options.fullResync,
-              removeStaleEvents: options.removeStaleEvents ?? true,
-              preferPlatformChanges: options.preferPlatformChanges,
-            },
-          });
-        } else {
-          throw err;
-        }
-      }
-    }
 
-    if (supabase) {
-      await persistShiftGoogleEventIds({
-        userId: options.userId,
-        shifts: result.syncedShifts,
+      if (error) {
+        throw new Error(await extractInvokeErrorMessage(error));
+      }
+
+      emitCalendarSyncCompatibilityMode(false);
+      return data as Awaited<ReturnType<CalendarSyncService["runSync"]>>;
+    } catch (error) {
+      console.warn("[CalendarSync][Backend] apply edge function failed", {
+        user_id: options.userId,
+        calendar_id: options.calendarId,
+        message: getErrorMessage(error),
+      });
+
+      return runLocalCalendarApply({
+        shifts,
+        options,
       });
     }
-
-    return {
-      summary: result.summary,
-      changes: result.changes,
-      syncedShifts: result.syncedShifts,
-      errors: result.errors.map((e) => ({
-        shiftId: e.shiftId,
-        message: e.message,
-      })),
-    };
   },
 
   async previewSync(shifts, options) {
     const supabase = getSupabaseClient();
 
     if (!supabase) {
-      emitCalendarSyncCompatibilityMode(true);
-      const repo = makeLocalCalendarRepository(
-        options.userId,
-        options.calendarId,
-      );
-      const service = new Phase3CalendarSync(repo);
-      const preview = await service.preview({
-        shifts,
-        accessToken: options.accessToken,
-        options: {
-          userId: options.userId,
-          provider: "google",
-          calendarId: options.calendarId,
-          dateRange: options.dateRange,
-          fullResync: options.fullResync,
-          removeStaleEvents: options.removeStaleEvents ?? true,
-          preferPlatformChanges: options.preferPlatformChanges,
-        },
-      });
-      return {
-        summary: preview.summary,
-        changes: preview.changes,
-      };
+      return runLocalCalendarPreview({ shifts, options });
     }
 
     try {
-      const service = new Phase3CalendarSync(supabaseCalendarRecords);
-      const preview = await service.preview({
-        shifts,
-        accessToken: options.accessToken,
-        options: {
+      const { data, error } = await supabase.functions.invoke("calendar-sync", {
+        body: {
+          action: "preview",
           userId: options.userId,
-          provider: "google",
           calendarId: options.calendarId,
           dateRange: options.dateRange,
           fullResync: options.fullResync,
-          removeStaleEvents: options.removeStaleEvents ?? true,
-          preferPlatformChanges: options.preferPlatformChanges,
+          removeStaleEvents: options.removeStaleEvents,
+          shifts,
         },
       });
-      emitCalendarSyncCompatibilityMode(false);
-      return {
-        summary: preview.summary,
-        changes: preview.changes,
-      };
-    } catch (err) {
-      if (!isMissingCalendarSyncRecordsTable(err)) {
-        throw err;
+
+      if (error) {
+        throw new Error(await extractInvokeErrorMessage(error));
       }
 
-      emitCalendarSyncCompatibilityMode(true);
-      const repo = makeLocalCalendarRepository(
-        options.userId,
-        options.calendarId,
-      );
-      const service = new Phase3CalendarSync(repo);
-      const preview = await service.preview({
-        shifts,
-        accessToken: options.accessToken,
-        options: {
-          userId: options.userId,
-          provider: "google",
-          calendarId: options.calendarId,
-          dateRange: options.dateRange,
-          fullResync: options.fullResync,
-          removeStaleEvents: options.removeStaleEvents ?? true,
-          preferPlatformChanges: options.preferPlatformChanges,
-        },
+      emitCalendarSyncCompatibilityMode(false);
+      return data as Awaited<ReturnType<CalendarSyncService["previewSync"]>>;
+    } catch (error) {
+      console.warn("[CalendarSync][Backend] preview edge function failed", {
+        user_id: options.userId,
+        calendar_id: options.calendarId,
+        message: getErrorMessage(error),
       });
-      return {
-        summary: preview.summary,
-        changes: preview.changes,
-      };
+
+      return runLocalCalendarPreview({ shifts, options });
+    }
+  },
+
+  async connectGoogleCalendar(userId, input) {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data, error } = await supabase.functions.invoke("calendar-sync", {
+      body: {
+        action: "connect",
+        userId,
+        ...input,
+      },
+    });
+
+    if (error) {
+      throw new Error(await extractInvokeErrorMessage(error));
+    }
+
+    return data as Awaited<ReturnType<CalendarSyncService["connectGoogleCalendar"]>>;
+  },
+
+  async updateConnection(userId, input) {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data, error } = await supabase.functions.invoke("calendar-sync", {
+      body: {
+        action: "update_connection",
+        userId,
+        ...input,
+      },
+    });
+
+    if (error) {
+      throw new Error(await extractInvokeErrorMessage(error));
+    }
+
+    return data as Awaited<ReturnType<CalendarSyncService["updateConnection"]>>;
+  },
+
+  async getConnectionStatus(userId) {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data, error } = await supabase.functions.invoke("calendar-sync", {
+      body: {
+        action: "status",
+        userId,
+      },
+    });
+
+    if (error) {
+      throw new Error(await extractInvokeErrorMessage(error));
+    }
+
+    return data as Awaited<ReturnType<CalendarSyncService["getConnectionStatus"]>>;
+  },
+
+  async triggerSync(input) {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data, error } = await supabase.functions.invoke("calendar-sync", {
+      body: {
+        action: "trigger",
+        ...input,
+      },
+    });
+
+    if (error) {
+      throw new Error(await extractInvokeErrorMessage(error));
+    }
+
+    return data as Awaited<ReturnType<CalendarSyncService["triggerSync"]>>;
+  },
+
+  async pullLatestGoogleChanges(input) {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { data, error } = await supabase.functions.invoke("calendar-sync", {
+      body: {
+        action: "pull",
+        ...input,
+      },
+    });
+
+    if (error) {
+      throw new Error(await extractInvokeErrorMessage(error));
+    }
+
+    return data as Awaited<
+      ReturnType<CalendarSyncService["pullLatestGoogleChanges"]>
+    >;
+  },
+
+  async disconnectProvider(userId) {
+    const supabase = getSupabaseClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
+
+    const { error } = await supabase.functions.invoke("calendar-sync", {
+      body: {
+        action: "disconnect",
+        userId,
+      },
+    });
+
+    if (error) {
+      throw new Error(await extractInvokeErrorMessage(error));
     }
   },
 };
